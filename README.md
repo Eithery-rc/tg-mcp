@@ -130,3 +130,7 @@ bun test          # formatter tests
 bun run typecheck
 bun run dev       # restart on change
 ```
+
+## License
+
+[MIT](LICENSE)

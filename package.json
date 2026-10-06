@@ -2,6 +2,7 @@
   "name": "tg-mcp",
   "version": "0.1.0",
   "description": "Remote Telegram MCP server for Claude Code: messages, questions and channel push over HTTP",
+  "license": "MIT",
   "type": "module",
   "private": true,
   "scripts": {

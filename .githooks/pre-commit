@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Refuse commits that contain secrets: Telegram bot tokens, or any value from .env.
+set -euo pipefail
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$staged" ] && exit 0
+
+envfiles=$(grep -E '(^|/)\.env(\.|$)' <<<"$staged" | grep -vxE '(.*/)?\.env\.example' || true)
+if [ -n "$envfiles" ]; then
+  echo "pre-commit: refusing to commit env files: $envfiles" >&2; exit 1
+fi
+
+diff=$(git diff --cached -U0 --diff-filter=ACM | grep '^+' || true)
+if grep -qE '[0-9]{8,10}:AA[A-Za-z0-9_-]{30,}' <<<"$diff"; then
+  echo "pre-commit: staged changes contain something that looks like a Telegram bot token" >&2; exit 1
+fi
+if [ -f .env ]; then
+  while IFS='=' read -r key value; do
+    [[ -z "$key" || "$key" == \#* || ${#value} -lt 12 ]] && continue
+    if grep -qF -- "$value" <<<"$diff"; then
+      echo "pre-commit: staged changes contain the value of $key from .env" >&2; exit 1
+    fi
+  done < .env
+fi

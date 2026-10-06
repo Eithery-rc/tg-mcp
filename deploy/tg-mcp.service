@@ -1,0 +1,14 @@
+[Unit]
+Description=tg-mcp: Telegram bridge for Claude Code agents (MCP over HTTP)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=%h/tg-mcp
+# bun loads .env from the working directory
+ExecStart=%h/.bun/bin/bun src/main.ts
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

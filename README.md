@@ -105,7 +105,11 @@ On Windows PowerShell `${PWD}` does not work, see the notes below.
 - **An unset variable without a default is sent literally.** `claude mcp list` warns
   `Missing environment variables: PWD`, and the server creates a topic named `${PWD}`.
   Give every header variable a default, e.g. `${TG_KEY:-}`. With an empty `X-Cwd` the
-  server asks the client for its workspace root (MCP roots) instead.
+  server asks the client for its workspace root (MCP roots), but Claude Code does not
+  answer that, so such sessions end up in a topic named `unknown`.
+- **Header values must be ASCII.** With e.g. a Cyrillic folder or workspace name in a
+  header variable the connection fails with `Header 'X-Cwd' has invalid value`. Strip or
+  replace such characters before putting a value into a header variable.
 - **PowerShell has no `PWD` environment variable.** `$PWD` exists only inside PowerShell,
   so `${PWD}` never expands for a Claude Code started from pwsh. Set your own variable in
   the script you launch Claude Code with.
@@ -122,21 +126,32 @@ On Windows PowerShell `${PWD}` does not work, see the notes below.
 - **To see what the server received**, look for the `session #N up: <key> channel=<bool>`
   line it logs for every connection: `journalctl --user -u tg-mcp | grep ' up:'`.
 
-Example: a PowerShell launcher that makes every session a channel and names topics after
-the herdr workspace (falling back to the folder), with the server
-added as `--header 'X-Cwd: ${TG_KEY:-}' --header 'X-Channel: ${TG_CHANNEL:-0}'`:
+Example: a PowerShell launcher for the herdr terminal workspace manager that makes every session a channel and gives each herdr tab its own topic: the workspace's
+first tab is named after the workspace (`Billing`), other tabs get the tab label appended
+(`Billing / 2`, or `Billing / hotfix` after renaming the tab). Outside herdr it falls back
+to the folder. The server is added with
+`--header 'X-Cwd: ${TG_KEY:-}' --header 'X-Channel: ${TG_CHANNEL:-0}'`.
 
 ```powershell
 $key = (Get-Location).Path
 if ($env:HERDR_PANE_ID -and $env:HERDR_BIN_PATH) {
     try {
-        $ws = (& $env:HERDR_BIN_PATH pane get $env:HERDR_PANE_ID | ConvertFrom-Json).result.pane.workspace_id
-        $label = ((& $env:HERDR_BIN_PATH workspace list | ConvertFrom-Json).result.workspaces |
-            Where-Object workspace_id -eq $ws).label
-        if ($label) { $key = "topic:$label" }
+        $h = $env:HERDR_BIN_PATH
+        $pane = (& $h pane get $env:HERDR_PANE_ID | ConvertFrom-Json).result.pane
+        $ws = ((& $h workspace list | ConvertFrom-Json).result.workspaces |
+            Where-Object workspace_id -eq $pane.workspace_id).label
+        # tab list comes in display order; tab ids change across herdr restarts, labels don't
+        $tabs = @((& $h tab list | ConvertFrom-Json).result.tabs |
+            Where-Object workspace_id -eq $pane.workspace_id)
+        if ($ws) {
+            $key = "topic:$ws"
+            if ($tabs.Count -gt 1 -and $tabs[0].tab_id -ne $pane.tab_id) {
+                $key += " / " + ($tabs | Where-Object tab_id -eq $pane.tab_id).label
+            }
+        }
     } catch {}
 }
-$env:TG_KEY = $key
+$env:TG_KEY = ($key -replace '[^\x20-\x7E]', '').Trim()   # headers must be ASCII
 $env:TG_CHANNEL = '1'
 try {
     claude --dangerously-load-development-channels server:telegram @args

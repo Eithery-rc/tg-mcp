@@ -93,6 +93,58 @@ the development flag (Claude Code shows a confirmation prompt on start):
 alias claude-tg='TG_CHANNEL=1 claude --dangerously-load-development-channels server:telegram'
 ```
 
+On Windows PowerShell `${PWD}` does not work, see the notes below.
+
+### Client setup notes
+
+- **The bearer is `MCP_TOKEN`, not the bot token.** A wrong token gets a bare
+  `401 unauthorized`, the same answer as no header at all; `claude mcp list` shows
+  "Server rejected the configured Authorization header (HTTP 401)".
+- **Header variables are expanded once, when a session starts**, from the environment
+  Claude Code was launched with. Changes apply to sessions started afterwards.
+- **An unset variable without a default is sent literally.** `claude mcp list` warns
+  `Missing environment variables: PWD`, and the server creates a topic named `${PWD}`.
+  Give every header variable a default, e.g. `${TG_KEY:-}`. With an empty `X-Cwd` the
+  server asks the client for its workspace root (MCP roots) instead.
+- **PowerShell has no `PWD` environment variable.** `$PWD` exists only inside PowerShell,
+  so `${PWD}` never expands for a Claude Code started from pwsh. Set your own variable in
+  the script you launch Claude Code with.
+- **`X-Cwd` does not have to be a path.** Its value is the routing key, and a key of the
+  form `topic:<name>` (what `set_topic` uses) gives a topic with exactly that name. This
+  lets you group sessions by something other than the folder, e.g. a terminal workspace.
+- **Every session can be a channel.** Routing picks the most recently active channel
+  session of a topic, and a reply to a bot message goes to the session that sent it, so
+  launching all sessions with the channel flag works fine.
+- **Remove the official local Telegram plugin if it used the same bot.** Telegram serves
+  `getUpdates` to one consumer per token, and the plugin starts its own poller (a
+  `bun server.ts` of about 250 MB) in every session where it is enabled. On Windows its
+  stale-poller cleanup calls `ps`, which does not exist there, so the pollers pile up.
+- **To see what the server received**, look for the `session #N up: <key> channel=<bool>`
+  line it logs for every connection: `journalctl --user -u tg-mcp | grep ' up:'`.
+
+Example: a PowerShell launcher that makes every session a channel and names topics after
+the herdr workspace (falling back to the folder), with the server
+added as `--header 'X-Cwd: ${TG_KEY:-}' --header 'X-Channel: ${TG_CHANNEL:-0}'`:
+
+```powershell
+$key = (Get-Location).Path
+if ($env:HERDR_PANE_ID -and $env:HERDR_BIN_PATH) {
+    try {
+        $ws = (& $env:HERDR_BIN_PATH pane get $env:HERDR_PANE_ID | ConvertFrom-Json).result.pane.workspace_id
+        $label = ((& $env:HERDR_BIN_PATH workspace list | ConvertFrom-Json).result.workspaces |
+            Where-Object workspace_id -eq $ws).label
+        if ($label) { $key = "topic:$label" }
+    } catch {}
+}
+$env:TG_KEY = $key
+$env:TG_CHANNEL = '1'
+try {
+    claude --dangerously-load-development-channels server:telegram @args
+} finally {
+    Remove-Item Env:TG_KEY, Env:TG_CHANNEL -ErrorAction SilentlyContinue
+}
+```
+
 ## Using it from scripts
 
 `POST /notify` sends a plain message without MCP, for cron jobs, CI or Claude Code hooks:

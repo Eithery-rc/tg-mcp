@@ -191,6 +191,23 @@ plugin that finds the agent's pane, restarts a stopped session there, and types 
 message in. Set `ROUTER=1` on the server to enable it. Without it the server behaves
 exactly as before and these endpoints answer 404.
 
+If you run your agents in [herdr](https://herdr.dev), the [herdr-wake](herdr-wake/README.md)
+plugin in this repository is such a router. It also puts sessions that sat idle for an
+hour to sleep and wakes them again for a Telegram message or a `SendMessage` from another
+session, which saves a lot of memory with many sessions open:
+
+```bash
+herdr plugin install Eithery-rc/tg-mcp/herdr-wake
+herdr plugin action invoke herdr-wake.start
+herdr plugin action invoke herdr-wake.install-hooks
+```
+
+With it, sessions no longer need to run as channels: drop
+`--dangerously-load-development-channels` and `X-Channel` from your launcher. See
+[herdr-wake/README.md](herdr-wake/README.md) for setup and configuration.
+
+The protocol, for writing your own router:
+
 - `GET /router/wait?timeout=25` (bearer auth) long-polls for queued messages, at most 50
   seconds. Each item has `id`, `key`, `topic`, `text`, `meta` (message_id, ts, attachment
   fields, in_reply_to), `queued_at`, `pane` and `live_panes`. Messages are leased to the

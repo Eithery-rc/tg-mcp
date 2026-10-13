@@ -1,14 +1,24 @@
-// Telegram router: long-polls tg-mcp's /router/wait, finds the herdr pane a message is for,
-// resumes the Claude session there through cldt when it has exited, types the message in,
-// and acks. Runs as the plugin's "router" pane.
+// herdr-wake: runs as the plugin's "router" pane.
+//
+// Router: long-polls tg-mcp's /router/wait, finds the herdr pane a message is for, resumes
+// the Claude session there through cldt when it has exited, types the message in, and acks.
+// Reaper: puts Claude sessions that sat idle for an hour to sleep (/exit, the pane stays,
+// marked 💤) and wakes them again for a Telegram message, a SendMessage (see hook.mjs) or
+// the local API.
 //
 //   node src/router.mjs                         the router
 //   node src/router.mjs --deliver <key> <text>  route one message by hand, without the server
+//   node src/router.mjs --reap-dry              show what the reaper would put to sleep now
+//
+// Local API on 127.0.0.1:<port>: GET /status, GET /sleeping, POST /wake {target},
+// POST /sleep {target}; target is a session name, a pane id or a session id.
 import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import http from 'node:http'
 import { homedir, hostname } from 'node:os'
 import { join } from 'node:path'
+import { hasSchedules, liveSessions, transcriptPath } from './claude.mjs'
 import { herdr, herdrText, snapshot } from './herdr.mjs'
+import { reapPlan } from './reaper.mjs'
 import { formatPrompt, resolve } from './route.mjs'
 import { inputDraft, isChannelsWarning, isTrustDialog } from './screen.mjs'
 
@@ -35,13 +45,15 @@ function readJson(file, fallback) {
 
 /** config.json in the plugin config dir; url and token default to the `telegram` MCP server in ~/.claude.json. */
 function loadConfig() {
+  const file = readJson(join(CONFIG_DIR, 'config.json'), {})
   const c = {
     server: 'telegram',
-    port: 12421, // local status endpoint; also keeps the router single-instance
+    port: 12421, // local API; also keeps the router single-instance
     wakeCommand: 'cldt --resume {session}',
     wakeTimeoutSec: 120,
     pollTimeoutSec: 25,
-    ...readJson(join(CONFIG_DIR, 'config.json'), {}),
+    ...file,
+    reaper: { enabled: false, idleMinutes: 60, exclude: [], maxPerRound: 3, ...file.reaper },
   }
   if (!c.url || !c.authorization) {
     const mcp = readJson(join(homedir(), '.claude.json'), {}).mcpServers?.[c.server]
@@ -62,13 +74,17 @@ function log(...parts) {
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
+const wakeCommand = session => cfg.wakeCommand.replace('{session}', session)
 
 // ───────────── sessions seen per pane ─────────────
 // The last Claude session of every pane, so a session that has exited can be resumed there.
+// `slept_at` marks the ones the reaper put to sleep.
 
 const sessions = readJson(SESSIONS_FILE, {})
+const save = () => writeFileSync(SESSIONS_FILE, JSON.stringify(sessions, null, 1))
+const goingToSleep = new Set() // panes between /exit and the shell prompt
 
-function remember(snap) {
+function remember(snap, live = liveSessions()) {
   const now = Date.now()
   const panes = new Set(snap.panes.map(p => p.pane_id))
   let changed = false
@@ -76,8 +92,17 @@ function remember(snap) {
     const id = p.agent === 'claude' ? p.agent_session?.value : undefined
     if (!id) continue
     const prev = sessions[p.pane_id]
-    if (prev?.session === id && now - prev.seen_at < 60_000) continue
-    sessions[p.pane_id] = { session: id, cwd: p.cwd, title: p.terminal_title_stripped || prev?.title || '', seen_at: now }
+    if (prev?.slept_at && !goingToSleep.has(p.pane_id)) markAwake(p.pane_id) // woken by hand or by herdr
+    const name = live.get(id)?.name || (prev?.session === id ? prev.name : '') || ''
+    if (prev?.session === id && prev.name === name && now - prev.seen_at < 60_000) continue
+    sessions[p.pane_id] = {
+      session: id,
+      name,
+      cwd: p.cwd,
+      title: p.terminal_title_stripped || prev?.title || '',
+      seen_at: now,
+      ...(goingToSleep.has(p.pane_id) && prev?.slept_at ? { slept_at: prev.slept_at } : {}),
+    }
     changed = true
   }
   for (const [pane, s] of Object.entries(sessions)) {
@@ -86,10 +111,26 @@ function remember(snap) {
       changed = true
     }
   }
-  if (changed) writeFileSync(SESSIONS_FILE, JSON.stringify(sessions, null, 1))
+  if (changed) save()
 }
 
-// ───────────── routing ─────────────
+function markAwake(pane) {
+  if (!sessions[pane]?.slept_at) return
+  delete sessions[pane].slept_at
+  save()
+  herdr(['pane', 'rename', pane, '--clear']).catch(() => {})
+}
+
+/** Sessions the reaper put to sleep whose pane is still there at a shell prompt. */
+function sleeping(snap) {
+  const panes = new Map(snap.panes.map(p => [p.pane_id, p]))
+  const labels = new Map(snap.workspaces.map(w => [w.workspace_id, w.label]))
+  return Object.entries(sessions)
+    .filter(([pane, s]) => s.slept_at && panes.has(pane) && !panes.get(pane).agent)
+    .map(([pane, s]) => ({ name: s.name || s.title, pane, session: s.session, workspace: labels.get(panes.get(pane).workspace_id) ?? '', slept_at: new Date(s.slept_at).toISOString() }))
+}
+
+// ───────────── waking and delivering ─────────────
 
 const paneLocks = new Map()
 function withPane(pane, fn) {
@@ -100,9 +141,8 @@ function withPane(pane, fn) {
 
 /**
  * Wait until the pane's Claude is ready for input: 'ready', 'trust', 'blocked' or 'timeout'.
- * cldt starts Claude with development channels, which first asks for a confirmation (also
- * after a herdr restart resumes panes through cldt); that one dialog is answered here. The
- * folder trust question is left to the user.
+ * Sessions started with development channels first ask for a confirmation; that one dialog
+ * is answered here. The folder trust question is left to the user.
  */
 async function waitReady(pane, timeoutMs) {
   let confirms = 0
@@ -133,9 +173,13 @@ async function wake(pane, session) {
     return { retry: 120, note: '⏳ Панель сессии занята другой программой. Доставлю, когда она освободится.' }
   }
   log(`waking ${session} in ${pane}`)
-  await herdr(['pane', 'run', pane, cfg.wakeCommand.replace('{session}', session)])
+  await herdr(['pane', 'send-keys', pane, 'esc']) // clears the resume command left at the prompt
+  await herdr(['pane', 'run', pane, wakeCommand(session)])
   const state = await waitReady(pane, cfg.wakeTimeoutSec * 1000)
-  if (state === 'ready') return { ok: true }
+  if (state === 'ready') {
+    markAwake(pane)
+    return { ok: true }
+  }
   if (state === 'timeout') return { retry: 60, note: '⏳ Сессия не успела запуститься, попробую ещё раз.' }
   return state === 'trust' ? TRUST : BLOCKED
 }
@@ -173,7 +217,124 @@ async function route(items) {
   })
 }
 
-// ───────────── server ─────────────
+// ───────────── reaper ─────────────
+
+function plan(snap, live) {
+  return reapPlan(snap, live, {
+    idleMinutes: cfg.reaper.idleMinutes,
+    exclude: cfg.reaper.exclude,
+    scheduled: s => {
+      try {
+        return hasSchedules(transcriptPath(s.sessionId, s.cwd))
+      } catch {
+        return true // cannot tell: keep it up
+      }
+    },
+  })
+}
+
+/** /exit an idle session, leave the pane marked 💤 with the resume command typed at its prompt. */
+function putToSleep(pane, p) {
+  return withPane(pane, async () => {
+    const cur = (await herdr(['pane', 'get', pane])).pane
+    if (cur.agent !== 'claude' || cur.agent_session?.value !== p.session) return false
+    if (cur.agent_status !== 'idle' && cur.agent_status !== 'done') return false
+    if (inputDraft(await herdrText(['agent', 'read', pane, '--source', 'recent', '--lines', '40', '--ansi'])) !== '') return false
+    const now = Date.now()
+    goingToSleep.add(pane)
+    try {
+      sessions[pane] = { ...sessions[pane], session: p.session, name: p.name, cwd: p.cwd, seen_at: now, slept_at: now }
+      save()
+      await herdr(['agent', 'prompt', pane, '/exit'])
+      for (const deadline = Date.now() + 30_000; Date.now() < deadline; await sleep(1000)) {
+        if ((await herdr(['pane', 'get', pane])).pane.agent) continue
+        await herdr(['pane', 'rename', pane, `💤 ${p.name}`]).catch(() => {})
+        await sleep(500)
+        await herdr(['pane', 'send-text', pane, wakeCommand(p.session)]).catch(() => {})
+        log(`put ${p.name} to sleep in ${pane} (${p.reason})`)
+        return true
+      }
+      delete sessions[pane].slept_at
+      save()
+      log(`${p.name} in ${pane} did not exit`)
+      return false
+    } finally {
+      goingToSleep.delete(pane)
+    }
+  })
+}
+
+async function reapRound() {
+  const snap = await snapshot()
+  const live = liveSessions()
+  remember(snap, live)
+  const due = plan(snap, live).filter(p => p.sleep).slice(0, cfg.reaper.maxPerRound)
+  for (const p of due) await putToSleep(p.pane, p).catch(err => log(`sleeping ${p.name} failed: ${err.message}`))
+}
+
+// ───────────── local API ─────────────
+
+function findSession(target, snap) {
+  const t = String(target ?? '').replace(/\s*\[[0-9a-f]+\]\s*$/i, '').trim().toLowerCase()
+  const panes = new Map(snap.panes.map(p => [p.pane_id, p]))
+  return Object.entries(sessions)
+    .filter(([pane]) => panes.has(pane))
+    .map(([pane, s]) => ({ pane, ...s, live: panes.get(pane).agent === 'claude' }))
+    .find(s => [s.name, s.pane, s.session].some(v => v && v.toLowerCase() === t))
+}
+
+async function wakeTarget(target) {
+  const snap = await snapshot()
+  remember(snap)
+  const s = findSession(target, snap)
+  if (!s) return { ok: false, error: `no session named ${target} in herdr` }
+  if (s.live) return { ok: true, pane: s.pane, name: s.name, already: true }
+  const r = await withPane(s.pane, () => wake(s.pane, s.session))
+  if (!r.ok) return { ok: false, error: r.note }
+  // It is reachable for SendMessage once it has registered itself again.
+  for (const deadline = Date.now() + 20_000; Date.now() < deadline && !liveSessions().has(s.session); ) await sleep(1000)
+  log(`woke ${s.name} in ${s.pane} on request`)
+  return { ok: true, pane: s.pane, name: s.name }
+}
+
+async function sleepTarget(target) {
+  const snap = await snapshot()
+  const live = liveSessions()
+  remember(snap, live)
+  const s = findSession(target, snap)
+  if (!s?.live) return { ok: false, error: `no running session named ${target}` }
+  const entry = live.get(s.session)
+  if (!entry || entry.status !== 'idle') return { ok: false, error: `${s.name} is not idle` }
+  const ok = await putToSleep(s.pane, { session: s.session, name: s.name, cwd: entry.cwd, reason: 'on request' })
+  return ok ? { ok: true, pane: s.pane, name: s.name } : { ok: false, error: `${s.name} did not go to sleep (busy, or text in its input box)` }
+}
+
+function readBody(req) {
+  return new Promise(resolve => {
+    let body = ''
+    req.on('data', d => (body += d))
+    req.on('end', () => {
+      try {
+        resolve(JSON.parse(body || '{}'))
+      } catch {
+        resolve({})
+      }
+    })
+  })
+}
+
+const status = { pid: process.pid, started: new Date().toISOString(), lastPoll: null, lastError: null }
+
+async function api(req) {
+  const path = req.url.split('?')[0]
+  if (req.method === 'GET' && path === '/status') return { ...status, reaper: cfg.reaper, sleeping: sleeping(await snapshot()), sessions }
+  if (req.method === 'GET' && path === '/sleeping') return sleeping(await snapshot())
+  if (req.method === 'POST' && path === '/wake') return wakeTarget((await readBody(req)).target)
+  if (req.method === 'POST' && path === '/sleep') return sleepTarget((await readBody(req)).target)
+  return null
+}
+
+// ───────────── tg-mcp ─────────────
 
 async function ack(id, outcome, note, retrySec) {
   const res = await fetch(`${cfg.url}/router/ack`, {
@@ -215,8 +376,6 @@ function groupByKey(items) {
   return [...groups.values()]
 }
 
-const status = { pid: process.pid, started: new Date().toISOString(), lastPoll: null, lastError: null }
-
 async function pollLoop() {
   let backoff = 1000
   for (;;) {
@@ -242,17 +401,18 @@ async function pollLoop() {
   }
 }
 
-async function rememberLoop() {
+/** Every `ms`, forever; logs an error once until it changes. */
+async function every(ms, name, fn) {
   let lastError = null
   for (;;) {
     try {
-      remember(await snapshot())
+      await fn()
       lastError = null
     } catch (err) {
-      if (lastError !== err.message) log(`snapshot failed: ${err.message}`)
+      if (lastError !== err.message) log(`${name} failed: ${err.message}`)
       lastError = err.message
     }
-    await sleep(15_000)
+    await sleep(ms)
   }
 }
 
@@ -268,18 +428,31 @@ if (process.argv[2] === '--deliver') {
   process.exit(r.ok ? 0 : 1)
 }
 
-const server = http.createServer((req, res) => {
-  if (req.url !== '/status') return res.writeHead(404).end()
-  res.writeHead(200, { 'content-type': 'application/json' })
-  res.end(JSON.stringify({ ...status, sessions }, null, 1))
+if (process.argv[2] === '--reap-dry') {
+  for (const p of plan(await snapshot(), liveSessions())) console.log(`${p.sleep ? 'SLEEP' : 'keep '}  ${p.pane.padEnd(7)} ${p.name.padEnd(34)} ${p.reason}`)
+  process.exit(0)
+}
+
+const server = http.createServer(async (req, res) => {
+  try {
+    const out = await api(req)
+    if (out === null) return res.writeHead(404).end()
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify(out, null, 1))
+  } catch (err) {
+    res.writeHead(500, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ ok: false, error: err.message }))
+  }
 })
 server.on('error', err => {
   if (err.code === 'EADDRINUSE') console.log(`another router already listens on 127.0.0.1:${cfg.port}, exiting`)
-  else log(`status server: ${err.message}`)
+  else log(`local API: ${err.message}`)
   process.exit(err.code === 'EADDRINUSE' ? 0 : 1)
 })
 server.listen(cfg.port, '127.0.0.1', () => {
-  log(`router up: ${new URL(cfg.url).host}, state ${STATE_DIR}, status http://127.0.0.1:${cfg.port}/status`)
-  rememberLoop()
+  const reaper = cfg.reaper.enabled ? `reaper on (${cfg.reaper.idleMinutes} min)` : 'reaper off'
+  log(`router up: ${new URL(cfg.url).host}, ${reaper}, state ${STATE_DIR}, API http://127.0.0.1:${cfg.port}`)
+  every(15_000, 'snapshot', async () => remember(await snapshot()))
+  if (cfg.reaper.enabled) every(60_000, 'reaper', reapRound)
   pollLoop()
 })

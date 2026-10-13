@@ -27,6 +27,8 @@ export const config = {
   dataDir: process.env.DATA_DIR?.trim() || './data',
   askTimeoutSec: Number(process.env.ASK_TIMEOUT_SEC || 600),
   relayPermissions: (process.env.RELAY_PERMISSIONS ?? '1') !== '0',
+  // Opt-in: lets a local router (e.g. a herdr plugin) take messages no channel session took.
+  router: /^(1|true|yes|on)$/i.test(process.env.ROUTER?.trim() ?? ''),
 }
 
 if (config.ownerId !== undefined && !Number.isSafeInteger(config.ownerId)) {

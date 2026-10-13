@@ -1,0 +1,14 @@
+{
+  "name": "herdr-wake",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "herdr plugin: routes Telegram messages from tg-mcp into Claude panes, waking stopped sessions",
+  "scripts": {
+    "start": "node src/router.mjs",
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

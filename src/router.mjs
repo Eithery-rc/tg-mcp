@@ -84,6 +84,12 @@ const sessions = readJson(SESSIONS_FILE, {})
 const save = () => writeFileSync(SESSIONS_FILE, JSON.stringify(sessions, null, 1))
 const goingToSleep = new Set() // panes between /exit and the shell prompt
 
+/** A snapshot with the time its request started, so a view older than a sleep is not mistaken for a wake. */
+async function freshSnapshot() {
+  const takenAt = Date.now()
+  return Object.assign(await snapshot(), { takenAt })
+}
+
 function remember(snap, live = liveSessions()) {
   const now = Date.now()
   const panes = new Set(snap.panes.map(p => p.pane_id))
@@ -92,7 +98,9 @@ function remember(snap, live = liveSessions()) {
     const id = p.agent === 'claude' ? p.agent_session?.value : undefined
     if (!id) continue
     const prev = sessions[p.pane_id]
-    if (prev?.slept_at && !goingToSleep.has(p.pane_id)) markAwake(p.pane_id) // woken by hand or by herdr
+    // Claude back in a sleeping pane: woken by hand or by herdr. Only a view taken after the
+    // sleep counts; an older one still shows the session that was just put to sleep.
+    if (prev?.slept_at && !goingToSleep.has(p.pane_id) && (snap.takenAt ?? 0) > prev.slept_at) markAwake(p.pane_id)
     const name = live.get(id)?.name || (prev?.session === id ? prev.name : '') || ''
     if (prev?.session === id && prev.name === name && now - prev.seen_at < 60_000) continue
     sessions[p.pane_id] = {
@@ -199,7 +207,7 @@ async function deliverLive(pane, text) {
 }
 
 async function route(items) {
-  const snap = await snapshot()
+  const snap = await freshSnapshot()
   remember(snap)
   const target = resolve(items[0], snap, sessions, MACHINE)
   if (!target) {
@@ -248,6 +256,8 @@ function putToSleep(pane, p) {
       await herdr(['agent', 'prompt', pane, '/exit'])
       for (const deadline = Date.now() + 30_000; Date.now() < deadline; await sleep(1000)) {
         if ((await herdr(['pane', 'get', pane])).pane.agent) continue
+        sessions[pane].slept_at = Date.now() // views taken before this still show Claude
+        save()
         await herdr(['pane', 'rename', pane, `💤 ${p.name}`]).catch(() => {})
         await sleep(500)
         await herdr(['pane', 'send-text', pane, wakeCommand(p.session)]).catch(() => {})
@@ -265,7 +275,7 @@ function putToSleep(pane, p) {
 }
 
 async function reapRound() {
-  const snap = await snapshot()
+  const snap = await freshSnapshot()
   const live = liveSessions()
   remember(snap, live)
   const due = plan(snap, live).filter(p => p.sleep).slice(0, cfg.reaper.maxPerRound)
@@ -284,7 +294,7 @@ function findSession(target, snap) {
 }
 
 async function wakeTarget(target) {
-  const snap = await snapshot()
+  const snap = await freshSnapshot()
   remember(snap)
   const s = findSession(target, snap)
   if (!s) return { ok: false, error: `no session named ${target} in herdr` }
@@ -298,7 +308,7 @@ async function wakeTarget(target) {
 }
 
 async function sleepTarget(target) {
-  const snap = await snapshot()
+  const snap = await freshSnapshot()
   const live = liveSessions()
   remember(snap, live)
   const s = findSession(target, snap)
@@ -327,8 +337,8 @@ const status = { pid: process.pid, started: new Date().toISOString(), lastPoll: 
 
 async function api(req) {
   const path = req.url.split('?')[0]
-  if (req.method === 'GET' && path === '/status') return { ...status, reaper: cfg.reaper, sleeping: sleeping(await snapshot()), sessions }
-  if (req.method === 'GET' && path === '/sleeping') return sleeping(await snapshot())
+  if (req.method === 'GET' && path === '/status') return { ...status, reaper: cfg.reaper, sleeping: sleeping(await freshSnapshot()), sessions }
+  if (req.method === 'GET' && path === '/sleeping') return sleeping(await freshSnapshot())
   if (req.method === 'POST' && path === '/wake') return wakeTarget((await readBody(req)).target)
   if (req.method === 'POST' && path === '/sleep') return sleepTarget((await readBody(req)).target)
   return null
@@ -429,7 +439,7 @@ if (process.argv[2] === '--deliver') {
 }
 
 if (process.argv[2] === '--reap-dry') {
-  for (const p of plan(await snapshot(), liveSessions())) console.log(`${p.sleep ? 'SLEEP' : 'keep '}  ${p.pane.padEnd(7)} ${p.name.padEnd(34)} ${p.reason}`)
+  for (const p of plan(await freshSnapshot(), liveSessions())) console.log(`${p.sleep ? 'SLEEP' : 'keep '}  ${p.pane.padEnd(7)} ${p.name.padEnd(34)} ${p.reason}`)
   process.exit(0)
 }
 
@@ -452,7 +462,7 @@ server.on('error', err => {
 server.listen(cfg.port, '127.0.0.1', () => {
   const reaper = cfg.reaper.enabled ? `reaper on (${cfg.reaper.idleMinutes} min)` : 'reaper off'
   log(`router up: ${new URL(cfg.url).host}, ${reaper}, state ${STATE_DIR}, API http://127.0.0.1:${cfg.port}`)
-  every(15_000, 'snapshot', async () => remember(await snapshot()))
+  every(15_000, 'snapshot', async () => remember(await freshSnapshot()))
   if (cfg.reaper.enabled) every(60_000, 'reaper', reapRound)
   pollLoop()
 })

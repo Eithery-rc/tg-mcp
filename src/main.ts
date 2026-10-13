@@ -20,7 +20,8 @@ const server = Bun.serve({
   port: config.port,
   idleTimeout: 0, // SSE streams stay open indefinitely
   async fetch(req) {
-    const { pathname } = new URL(req.url)
+    const url = new URL(req.url)
+    const { pathname } = url
     if (pathname === '/health') return Response.json({ ok: true, sessions: hub.sessionCount })
     if (!authorized(req)) return new Response('unauthorized', { status: 401 })
 
@@ -33,6 +34,25 @@ const server = Bun.serve({
       const key = body.cwd ? body.cwd : `topic:${body.topic || 'notifications'}`
       const sent = await hub.notify(key, body.text, body.silent)
       return Response.json({ ok: true, message_ids: sent.map(m => m.id) })
+    }
+
+    if (config.router && pathname === '/router/wait' && req.method === 'GET') {
+      // Long poll for the local router: ?timeout=<sec> (default 25, max 50).
+      const timeout = Math.min(Math.max(Number(url.searchParams.get('timeout') ?? 25) || 0, 0), 50)
+      const items = await hub.routerWait(timeout * 1000, req.signal)
+      return Response.json({ items })
+    }
+
+    if (config.router && pathname === '/router/ack' && req.method === 'POST') {
+      // {"id": 12, "outcome": "delivered" | "retry" | "skipped", "note"?: "...", "retry_sec"?: 30}
+      const body = (await req.json().catch(() => null)) as { id?: number; outcome?: string; note?: string; retry_sec?: number } | null
+      const outcome = body?.outcome
+      if (!Number.isSafeInteger(body?.id) || (outcome !== 'delivered' && outcome !== 'retry' && outcome !== 'skipped')) {
+        return Response.json({ error: 'id and outcome (delivered | retry | skipped) are required' }, { status: 400 })
+      }
+      const retrySec = Math.min(Math.max(Number(body!.retry_sec ?? 30) || 30, 1), 3600)
+      const ok = await hub.routerAck(body!.id!, outcome, body!.note?.slice(0, 1000) || undefined, retrySec)
+      return Response.json({ ok })
     }
     return new Response('not found', { status: 404 })
   },

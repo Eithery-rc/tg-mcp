@@ -4,13 +4,15 @@
 // the client in the X-Cwd header). Each key gets one forum topic in the private chat
 // with the bot. Owner messages in a topic go to the most recently active session for
 // that key, pushed as a Claude Code channel event when the session runs as a channel,
-// otherwise queued until the agent calls `inbox`.
+// otherwise queued until the agent calls `inbox`. With ROUTER=1 a local router can take the
+// queued messages instead and deliver them itself (see the router section below).
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
 import { basename, dirname } from 'node:path'
+import { config } from './config'
 import { RingEventStore } from './events'
 import { chunkMarkdown, escapeHtml, markdownToHtml } from './format'
-import type { Store, Topic } from './store'
+import type { InboxItem, Store, Topic } from './store'
 import { Telegram, TelegramError, type InlineKeyboard, type TgCallbackQuery, type TgMessage, type TgUpdate } from './telegram'
 
 export type Session = {
@@ -19,6 +21,7 @@ export type Session = {
   cwd: string
   key: string
   channel: boolean
+  pane: string // herdr pane id from X-Herdr-Pane, empty when not sent
   mcp: McpServer
   transport: WebStandardStreamableHTTPServerTransport
   lastSeen: number // last HTTP request of any kind
@@ -38,9 +41,26 @@ type PendingAsk = {
 
 export type PermissionRequest = { request_id: string; tool_name: string; description: string; input_preview: string }
 
+/** A queued message as the router sees it. */
+export type RouterItem = {
+  id: number
+  key: string
+  topic: string
+  text: string
+  meta: Record<string, string>
+  queued_at: string
+  pane: string | null // the session the user replied to, else the last pane seen for the key
+  live_panes: string[] // panes of sessions connected for the key right now
+}
+
+export type RouterOutcome = 'delivered' | 'retry' | 'skipped'
+
 const TOPIC_GONE = /thread not found|TOPIC_DELETED|TOPIC_CLOSED|TOPIC_ID_INVALID/i
 const VERDICT_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
+const PANE_RE = /^[\w:.-]{1,64}$/
 const STALE_SESSION_MS = 30 * 60_000
+const ROUTER_GRACE_MS = 60_000 // the router counts as online this long after its last poll
+const ROUTER_LEASE_MS = 3 * 60_000 // time the router has to ack before a message is handed out again
 
 function hasLiveStream(t: WebStandardStreamableHTTPServerTransport): boolean {
   // The SDK keeps the standalone GET stream under this key; there is no public accessor.
@@ -58,9 +78,13 @@ export class Hub {
   private nextNumber = 1
   private topicCreation = new Map<string, Promise<Topic>>()
   private sentBy = new Map<number, string>() // telegram message id -> session id
+  private sentPane = new Map<number, string>() // telegram message id -> herdr pane of the sender
   private asks = new Map<string, PendingAsk>()
   private lastChannelSeen = new Map<string, number>()
   private startedAt = Date.now()
+  private routerWaiters = new Set<() => void>()
+  private routerPolls = 0
+  private routerSeenAt = 0
 
   constructor(
     private tg: Telegram,
@@ -94,6 +118,7 @@ export class Hub {
 
   private async openSession(req: Request): Promise<Response> {
     const cwd = req.headers.get('x-cwd')?.trim() ?? ''
+    const pane = req.headers.get('x-herdr-pane')?.trim() ?? ''
     const now = Date.now()
     const s = {
       id: '',
@@ -101,6 +126,7 @@ export class Hub {
       cwd,
       key: cwd || 'unknown',
       channel: /^(1|true|yes|on)$/i.test(req.headers.get('x-channel')?.trim() ?? ''),
+      pane: PANE_RE.test(pane) ? pane : '',
       lastSeen: now,
       lastActive: now,
       perms: new Map(),
@@ -133,7 +159,8 @@ export class Hub {
       } catch {}
     }
     const client = s.mcp.server.getClientVersion()
-    console.log(`session #${s.n} up: ${s.key} channel=${s.channel} client=${client?.name}/${client?.version}`)
+    console.log(`session #${s.n} up: ${s.key} channel=${s.channel}${s.pane ? ` pane=${s.pane}` : ''} client=${client?.name}/${client?.version}`)
+    if (s.pane) this.store.savePane(s.key, s.pane)
     if (!s.channel || this.ownerId === undefined) return
 
     const recentlySeen = (this.lastChannelSeen.get(s.key) ?? 0) > Date.now() - 10 * 60_000
@@ -171,6 +198,7 @@ export class Hub {
   /** Re-point a session at a named topic instead of its working directory. */
   async retarget(s: Session, name: string): Promise<Topic> {
     s.key = `topic:${name}`
+    if (s.pane) this.store.savePane(s.key, s.pane)
     return this.ensureTopic(s.key)
   }
 
@@ -223,6 +251,10 @@ export class Hub {
     if (!sid) return
     this.sentBy.set(messageId, sid)
     if (this.sentBy.size > 5000) this.sentBy.delete(this.sentBy.keys().next().value!)
+    // Kept separately: the pane outlives the session, e.g. when the router has to wake it.
+    const pane = this.sessions.get(sid)?.pane
+    if (pane) this.sentPane.set(messageId, pane)
+    if (this.sentPane.size > 5000) this.sentPane.delete(this.sentPane.keys().next().value!)
   }
 
   /** Send Markdown to a topic, split as needed. Returns the sent messages (last one carries the keyboard). */
@@ -386,12 +418,12 @@ export class Hub {
   }
 
   async flushInbox(s: Session) {
-    if (!s.channel || this.store.pendingCount(s.key) === 0) return
-    const items = this.store.drain(s.key)
+    if (!s.channel || this.pendingCount(s.key) === 0) return
+    const items = this.drainInbox(s.key)
     for (const [i, it] of items.entries()) {
       const meta = { ...it.meta, queued_at: new Date(it.created_at).toISOString() }
       if (!(await this.push(s, it.text, meta))) {
-        for (const rest of items.slice(i)) this.store.enqueue(rest.key, rest.text, rest.meta)
+        for (const rest of items.slice(i)) this.store.requeue(rest)
         return
       }
     }
@@ -399,11 +431,11 @@ export class Hub {
   }
 
   pendingCount(key: string) {
-    return this.store.pendingCount(key)
+    return this.store.pendingCount(key, this.routerOnline())
   }
 
   drainInbox(key: string) {
-    return this.store.drain(key)
+    return this.store.drain(key, this.routerOnline())
   }
 
   async handleUpdate(u: TgUpdate) {
@@ -463,7 +495,12 @@ export class Hub {
       }
     }
 
-    this.store.enqueue(topic.key, content, meta)
+    this.store.enqueue(topic.key, content, meta, (replyTo && this.sentPane.get(replyTo)) || null)
+    if (this.routerOnline()) {
+      // The router reports back through routerAck: 👀 once delivered, or a note.
+      this.wakeRouter()
+      return
+    }
     const live = this.liveSessions(topic.key).length > 0
     await this.reply(
       msg,
@@ -510,19 +547,114 @@ export class Hub {
       .catch(() => {})
   }
 
+  // ───────────────────────────── router ─────────────────────────────
+  //
+  // Opt-in (ROUTER=1). A local router, e.g. a herdr plugin on the user's machine, long-polls
+  // /router/wait for messages that no channel session took, finds or wakes the agent they are
+  // for, types them in, and acks through /router/ack. While it polls, queued messages belong to
+  // it: `inbox` and channel flushes skip them. When it stops polling they fall back to the
+  // agents after ROUTER_GRACE_MS, so without a router nothing changes.
+
+  routerOnline(): boolean {
+    return config.router && (this.routerPolls > 0 || Date.now() - this.routerSeenAt < ROUTER_GRACE_MS)
+  }
+
+  private wakeRouter() {
+    for (const wake of [...this.routerWaiters]) wake()
+  }
+
+  /** Lease queued messages to the router, waiting up to `timeoutMs` for one to arrive. */
+  async routerWait(timeoutMs: number, signal: AbortSignal): Promise<RouterItem[]> {
+    this.routerPolls++
+    this.routerSeenAt = Date.now()
+    try {
+      const deadline = Date.now() + timeoutMs
+      while (true) {
+        const items = this.store.leaseForRouter(ROUTER_LEASE_MS)
+        if (items.length || signal.aborted || Date.now() >= deadline) return items.map(it => this.routerItem(it))
+        await new Promise<void>(resolve => {
+          const done = () => {
+            clearTimeout(timer)
+            signal.removeEventListener('abort', done)
+            this.routerWaiters.delete(done)
+            resolve()
+          }
+          const timer = setTimeout(done, deadline - Date.now())
+          signal.addEventListener('abort', done, { once: true })
+          this.routerWaiters.add(done)
+        })
+      }
+    } finally {
+      this.routerPolls--
+      this.routerSeenAt = Date.now()
+    }
+  }
+
+  private routerItem(it: InboxItem): RouterItem {
+    return {
+      id: it.id,
+      key: it.key,
+      topic: this.store.topicByKey(it.key)?.name ?? it.key,
+      text: it.text,
+      meta: it.meta,
+      queued_at: new Date(it.created_at).toISOString(),
+      pane: it.pane ?? this.store.paneFor(it.key),
+      live_panes: this.liveSessions(it.key)
+        .filter(s => s.pane && hasLiveStream(s.transport))
+        .map(s => s.pane),
+    }
+  }
+
+  /**
+   * The router's verdict on a leased message. delivered: drop it and react 👀. retry: hand it
+   * out again after `retrySec`. skipped: leave it to the agents (inbox, channel flush). A note
+   * goes to the topic as a reply to the message. False when the message is no longer the router's.
+   */
+  async routerAck(id: number, outcome: RouterOutcome, note?: string, retrySec = 30): Promise<boolean> {
+    const it =
+      outcome === 'delivered'
+        ? this.store.routerDelivered(id)
+        : outcome === 'retry'
+          ? this.store.routerRetry(id, Date.now() + retrySec * 1000)
+          : this.store.routerSkipped(id)
+    if (!it) return false
+    const messageId = Number(it.meta.message_id)
+    if (outcome === 'delivered' && this.ownerId !== undefined) {
+      await this.tg
+        .call('setMessageReaction', { chat_id: this.ownerId, message_id: messageId, reaction: [{ type: 'emoji', emoji: '👀' }] })
+        .catch(() => {})
+    }
+    if (note) {
+      await this.inTopic(it.key, thread =>
+        this.tg.call('sendMessage', {
+          chat_id: this.owner(),
+          message_thread_id: thread,
+          text: note,
+          disable_notification: true,
+          reply_parameters: { message_id: messageId, allow_sending_without_reply: true },
+        }),
+      ).catch(err => console.error('router note failed', err))
+    }
+    console.log(`router ${outcome} message ${id} (${it.key})`)
+    return true
+  }
+
   status(): string {
     const sessions = [...this.sessions.values()]
-    if (!sessions.length) return 'Сейчас нет подключённых сессий.'
+    const router = config.router ? `\n\n🧭 Роутер: ${this.routerOnline() ? 'на связи' : 'не на связи'}` : ''
+    if (!sessions.length) return `Сейчас нет подключённых сессий.${router}`
     const now = Date.now()
-    return sessions
-      .sort((a, b) => b.lastActive - a.lastActive)
-      .map(s => {
-        const name = this.store.topicByKey(s.key)?.name ?? basename(s.key)
-        const mins = Math.round((now - s.lastActive) / 60_000)
-        const queued = this.store.pendingCount(s.key)
-        return `${s.channel ? '🟢' : '🔌'} ${name} — #${s.n}, активность ${mins} мин назад${queued ? `, в очереди ${queued}` : ''}`
-      })
-      .join('\n')
+    return (
+      sessions
+        .sort((a, b) => b.lastActive - a.lastActive)
+        .map(s => {
+          const name = this.store.topicByKey(s.key)?.name ?? basename(s.key)
+          const mins = Math.round((now - s.lastActive) / 60_000)
+          const queued = this.pendingCount(s.key)
+          return `${s.channel ? '🟢' : '🔌'} ${name} — #${s.n}, активность ${mins} мин назад${queued ? `, в очереди ${queued}` : ''}`
+        })
+        .join('\n') + router
+    )
   }
 
   get sessionCount() {

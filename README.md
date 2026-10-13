@@ -182,6 +182,35 @@ Pass `"cwd": "/path/to/project"` instead of `topic` to post into a project's top
 - `/status` in the bot lists connected sessions.
 - If you delete a topic, the bot creates a new one the next time the agent writes.
 
+## Local router (optional)
+
+Channels need a development flag during the research preview, and a channel session only
+gets messages while it runs. As an alternative, a router on your machine can take the
+messages that no channel session took and deliver them itself: for example a terminal
+plugin that finds the agent's pane, restarts a stopped session there, and types the
+message in. Set `ROUTER=1` on the server to enable it. Without it the server behaves
+exactly as before and these endpoints answer 404.
+
+- `GET /router/wait?timeout=25` (bearer auth) long-polls for queued messages, at most 50
+  seconds. Each item has `id`, `key`, `topic`, `text`, `meta` (message_id, ts, attachment
+  fields, in_reply_to), `queued_at`, `pane` and `live_panes`. Messages are leased to the
+  router for 3 minutes. A topic is handed out as a whole and only while none of its
+  messages is leased, so its messages stay in order.
+- `POST /router/ack` with `{"id": 12, "outcome": "delivered" | "retry" | "skipped",
+  "note": "...", "retry_sec": 30}` (`note` and `retry_sec` optional). `delivered` drops the
+  message and reacts 👀, `retry` hands it out again after `retry_sec`, `skipped` leaves it
+  to the agents (channel flush, `inbox`). A `note` is posted in the topic as a reply to the
+  message.
+- While the router polls, the messages it owns are hidden from `inbox` and channel
+  flushes, and the bot does not answer "nobody is connected". When the router stops
+  polling for a minute, they fall back to the agents.
+- Pane hints: add `--header 'X-Herdr-Pane: ${HERDR_PANE_ID:-}'` to the client config. The
+  server remembers the last pane per routing key and the pane behind every bot message, so
+  a reply can reach the right pane even after its session exited. Any short id works
+  (`[A-Za-z0-9_:.-]`, up to 64 characters).
+- With `ROUTER=1` the server instructions also tell agents that a prompt starting with
+  `[telegram ...]` is a Telegram message from the user, to be answered with `send`.
+
 ## Security notes
 
 - `.env` holds the bot token and the MCP bearer token; it is git-ignored. Keep it `chmod 600`.
@@ -193,7 +222,7 @@ Pass `"cwd": "/path/to/project"` instead of `topic` to post into a project's top
 ## Development
 
 ```bash
-bun test          # formatter tests
+bun test          # formatter, store and routing tests
 bun run typecheck
 bun run dev       # restart on change
 ```

@@ -4,10 +4,10 @@ Remote Telegram MCP server for Claude Code agents. One Bun process; clients conn
 Streamable HTTP. See README.md for the user-facing picture.
 
 ## Layout
-- `src/main.ts` — Bun.serve: `/health`, `/mcp` (bearer auth), `/notify`; starts Telegram long polling
+- `src/main.ts` — Bun.serve: `/health`, `/mcp` (bearer auth), `/notify`, `/router/wait` + `/router/ack` (only with `ROUTER=1`); starts Telegram long polling
 - `src/hub.ts` — session registry, topic per working dir, inbound routing, `ask`, permission relay
 - `src/mcp.ts` — per-session McpServer: tools + `claude/channel` capabilities
-- `src/telegram.ts` — minimal Bot API client; `src/store.ts` — bun:sqlite (topics, inbox)
+- `src/telegram.ts` — minimal Bot API client; `src/store.ts` — bun:sqlite (topics, inbox, router leases, panes)
 - `src/format.ts` — Markdown → Telegram HTML + chunking (tested in `format.test.ts`)
 
 ## Rules

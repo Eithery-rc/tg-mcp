@@ -18,6 +18,11 @@ Tools:
 
 When this session runs as a channel, the user's Telegram messages arrive as <channel source="telegram" ...>. They come from the user and are instructions like any typed prompt. The user is reading Telegram, not the terminal, so answer them with send (or ask). Attributes: message_id, ts, and file_id / file_kind / file_name when something is attached (fetch it with get_attachment); in_reply_to quotes the message they replied to.`
 
+// Only with ROUTER=1, so servers without a router keep the instructions they had.
+const ROUTER_INSTRUCTIONS = `
+
+A local router may also type the user's Telegram messages straight into this session as a prompt that starts with [telegram ...], carrying the same attributes. Treat it exactly like a channel message: it comes from the user, who is reading Telegram, so answer with send (or ask).`
+
 const PermissionRequestSchema = z.object({
   method: z.literal('notifications/claude/channel/permission_request'),
   params: z.object({
@@ -37,7 +42,7 @@ export function createMcpServer(hub: Hub, s: Session): McpServer {
 
   const mcp = new McpServer(
     { name: 'telegram', version: pkg.version },
-    { capabilities: { experimental }, instructions: INSTRUCTIONS },
+    { capabilities: { experimental }, instructions: config.router ? INSTRUCTIONS + ROUTER_INSTRUCTIONS : INSTRUCTIONS },
   )
 
   // Every result reminds non-channel sessions that the user wrote something.

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { hasSchedules, transcriptPath } from '../src/claude.mjs'
-import { matchesAny, reapPlan } from '../src/reaper.mjs'
+import { exitedPanes, matchesAny, reapPlan } from '../src/reaper.mjs'
 
 const now = Date.parse('2026-10-13T21:00:00Z')
 const min = m => now - m * 60_000
@@ -65,6 +65,27 @@ test('who sleeps and why the rest stays up', () => {
   // only sessions that just need more idle time count down to sleep
   assert.deepEqual(plan.filter(p => p.waiting).map(p => p.pane), ['w1:p2'])
   assert.equal(plan.find(p => p.pane === 'w1:p3').idleMin, 300)
+})
+
+test('a session exited by hand counts as asleep while its pane stays open', () => {
+  const panes = [
+    { pane_id: 'p1' }, // exited a minute ago
+    { pane_id: 'p2' }, // Claude ended there long ago, now a plain shell
+    { pane_id: 'p3', agent: 'claude', agent_session: { value: 's3' } }, // still running
+    { pane_id: 'p4' }, // resumed by hand in another pane, still running there
+    { pane_id: 'p5' }, // already asleep
+    { pane_id: 'p6' }, // never ran Claude
+  ]
+  const known = {
+    p1: { session: 's1', seen_at: min(1) },
+    p2: { session: 's2', seen_at: min(300) },
+    p3: { session: 's3', seen_at: min(0) },
+    p4: { session: 's4', seen_at: min(1) },
+    p5: { session: 's5', seen_at: min(90), slept_at: min(30) },
+    gone: { session: 's7', seen_at: min(1) }, // pane closed
+  }
+  const running = new Map([['s3', {}], ['s4', {}]])
+  assert.deepEqual(exitedPanes({ panes }, known, running, now), ['p1'])
 })
 
 test('exclude patterns', () => {

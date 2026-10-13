@@ -80,6 +80,15 @@ put to sleep when all of these hold:
 
 If `/exit` still asks whether to stop background tasks, the router cancels and leaves the
 session running. At most `maxPerRound` sessions go to sleep per minute.
+
+A session you exit yourself (`/exit`) counts as asleep too, as long as its pane stays open:
+the router notices within 15 seconds, marks the pane 💤, and `ListAgents`, `SendMessage`
+and Telegram treat it like one the reaper put to sleep (without the resume command typed
+in, since you are probably at that prompt). This works whether or not the reaper is on.
+Only exits of sessions seen running in the last 10 minutes count, so panes whose Claude
+ended long ago and that are now plain shells stay as they are. Close the pane to be done
+with a session for good. When waking, the router first changes back to the session's
+folder if the shell has left it.
 `node src/router.mjs --reap-dry` shows the current verdict for every Claude pane.
 
 ## How a Telegram message is routed

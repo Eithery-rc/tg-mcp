@@ -88,7 +88,9 @@ try {
         .filter(s => Date.now() - Date.parse(s.slept_at) < LIST_DAYS * 86_400_000)
         .sort((a, b) => Date.parse(b.slept_at) - Date.parse(a.slept_at))
         .slice(0, LIST_MAX)
-      const rows = recent.map(s => `  ${s.name}  ·  workspace ${s.workspace}  ·  asleep for ${ago(s.slept_at)}`)
+      const rows = recent.map(
+        s => `  ${s.name}  ·  workspace ${s.workspace}  ·  ${s.exited ? 'exited by the user' : 'put to sleep'} ${ago(s.slept_at)} ago`,
+      )
       const rest = list.length - recent.length
       if (rest) {
         rows.push(
@@ -97,7 +99,8 @@ try {
         )
       }
       parts.push(
-        `Sleeping sessions on this machine (not listed above): herdr-wake put them to sleep after they sat idle. ` +
+        `Sleeping sessions on this machine (not listed above): put to sleep by herdr-wake after they sat idle, or ` +
+          `exited by the user; their pane is still open. ` +
           `SendMessage to one by name wakes it first (takes about 10 to 30 seconds), then delivers.\n${rows.join('\n')}`,
       )
     }

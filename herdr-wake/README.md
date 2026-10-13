@@ -115,6 +115,7 @@ it has written an explicit `hasTrustDialogAccepted: false` for it into `~/.claud
 | `reaper.idleMinutes` | `60` | how long a session must sit idle |
 | `reaper.exclude` | `[]` | session names, workspace labels or titles never to put to sleep; exact (any case) or `"/regex/"` |
 | `reaper.maxPerRound` | `3` | sessions put to sleep per minute at most |
+| `listSleepingDays` | `7` | `ListAgents` lists sessions asleep for less than this (at most 15) and only counts the rest; a session sleeps until its pane is closed, so the full list keeps growing. All of them stay wakeable by name |
 | `wakeCommand` | `claude --resume {session}` | command typed into the pane to resume a session |
 | `wakeTimeoutSec` | `120` | how long to wait for a resumed session |
 | `url`, `authorization` | from `~/.claude.json` | tg-mcp base url (without `/mcp`) and the `Authorization` header value |

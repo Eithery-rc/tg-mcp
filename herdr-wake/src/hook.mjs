@@ -10,10 +10,15 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 const CONFIG_DIR = join(process.env.APPDATA || join(homedir(), '.config'), 'herdr', 'plugins', 'config', 'herdr-wake')
-let port = 12421
+let cfg = {}
 try {
-  port = JSON.parse(readFileSync(join(CONFIG_DIR, 'config.json'), 'utf8')).port ?? port
+  cfg = JSON.parse(readFileSync(join(CONFIG_DIR, 'config.json'), 'utf8'))
 } catch {}
+const port = cfg.port ?? 12421
+// ListAgents shows the sessions that fell asleep recently, the rest as a count: a sleeping
+// session stays until its pane is closed, so the full list only grows. All stay wakeable.
+const LIST_DAYS = cfg.listSleepingDays ?? 7
+const LIST_MAX = 15
 
 async function api(path, body, timeoutMs) {
   const res = await fetch(`http://127.0.0.1:${port}${path}`, {
@@ -79,10 +84,21 @@ try {
       )
     }
     if (list.length) {
-      const rows = list.map(s => `  ${s.name}  ·  workspace ${s.workspace}  ·  asleep for ${ago(s.slept_at)}`).join('\n')
+      const recent = list
+        .filter(s => Date.now() - Date.parse(s.slept_at) < LIST_DAYS * 86_400_000)
+        .sort((a, b) => Date.parse(b.slept_at) - Date.parse(a.slept_at))
+        .slice(0, LIST_MAX)
+      const rows = recent.map(s => `  ${s.name}  ·  workspace ${s.workspace}  ·  asleep for ${ago(s.slept_at)}`)
+      const rest = list.length - recent.length
+      if (rest) {
+        rows.push(
+          `  ... and ${rest} asleep longer, not shown (all: http://127.0.0.1:${port}/sleeping); ` +
+            `SendMessage by name wakes them too`,
+        )
+      }
       parts.push(
         `Sleeping sessions on this machine (not listed above): herdr-wake put them to sleep after they sat idle. ` +
-          `SendMessage to one by name wakes it first (takes about 10 to 30 seconds), then delivers.\n${rows}`,
+          `SendMessage to one by name wakes it first (takes about 10 to 30 seconds), then delivers.\n${rows.join('\n')}`,
       )
     }
     if (parts.length) {

@@ -9,6 +9,22 @@ export function matchesAny(patterns, values) {
 }
 
 /**
+ * Panes whose Claude session the user exited (/exit, Ctrl+C): the router saw the session
+ * there within `windowMs`, the pane has no agent any more and Claude's registry no longer
+ * lists the session as running. From then on they count as asleep, so SendMessage and
+ * Telegram wake them like the reaper's. The window keeps panes whose Claude ended long ago,
+ * now plain shells, out of it. `known` is sessions.json, `live` the running sessions by id.
+ */
+export function exitedPanes(snap, known, live, now = Date.now(), windowMs = 10 * 60_000) {
+  return snap.panes
+    .filter(p => {
+      const k = known[p.pane_id]
+      return k?.session && !k.slept_at && !p.agent && !live.has(k.session) && now - k.seen_at < windowMs
+    })
+    .map(p => p.pane_id)
+}
+
+/**
  * One entry per Claude pane: `sleep: true` for those to put to sleep, otherwise the reason it
  * stays up. `live` maps session id -> Claude's registry entry (~/.claude/sessions). A session
  * sleeps only when Claude itself reports it idle (not busy, not running a background shell)

@@ -18,8 +18,8 @@ import { homedir, hostname } from 'node:os'
 import { join } from 'node:path'
 import { hasSchedules, liveSessions, transcriptPath } from './claude.mjs'
 import { herdr, herdrText, snapshot } from './herdr.mjs'
-import { reapPlan } from './reaper.mjs'
-import { formatPrompt, resolve } from './route.mjs'
+import { exitedPanes, reapPlan } from './reaper.mjs'
+import { formatPrompt, resolve, samePath } from './route.mjs'
 import { inputDraft, isChannelsWarning, isExitTasksDialog, isTrustDialog } from './screen.mjs'
 
 const PLUGIN_ID = process.env.HERDR_PLUGIN_ID || 'herdr-wake'
@@ -113,6 +113,20 @@ function remember(snap, live = liveSessions()) {
     }
     changed = true
   }
+  // Exited by the user: asleep from the last time it was seen running, without the resume
+  // command typed in (the user is likely at that prompt).
+  for (const pane of exitedPanes(snap, sessions, live, now)) {
+    if (goingToSleep.has(pane)) continue
+    const s = sessions[pane]
+    Object.assign(s, { slept_at: s.seen_at, exited: true })
+    changed = true
+    herdr(['pane', 'rename', pane, `💤 ${s.name || s.title}`]).catch(() => {})
+    log(`${s.name || s.title} in ${pane} was exited, wakeable from now on`)
+  }
+  // A running session is awake wherever it runs, e.g. resumed by hand in another pane.
+  for (const [pane, s] of Object.entries(sessions)) {
+    if (s.slept_at && live.has(s.session) && !goingToSleep.has(pane)) markAwake(pane)
+  }
   for (const [pane, s] of Object.entries(sessions)) {
     if (!panes.has(pane) && now - s.seen_at > 7 * 86_400_000) {
       delete sessions[pane]
@@ -125,17 +139,25 @@ function remember(snap, live = liveSessions()) {
 function markAwake(pane) {
   if (!sessions[pane]?.slept_at) return
   delete sessions[pane].slept_at
+  delete sessions[pane].exited
   save()
   herdr(['pane', 'rename', pane, '--clear']).catch(() => {})
 }
 
-/** Sessions the reaper put to sleep whose pane is still there at a shell prompt. */
+/** Sessions put to sleep by the reaper or exited by the user whose pane is still there at a shell prompt. */
 function sleeping(snap) {
   const panes = new Map(snap.panes.map(p => [p.pane_id, p]))
   const labels = new Map(snap.workspaces.map(w => [w.workspace_id, w.label]))
   return Object.entries(sessions)
     .filter(([pane, s]) => s.slept_at && panes.has(pane) && !panes.get(pane).agent)
-    .map(([pane, s]) => ({ name: s.name || s.title, pane, session: s.session, workspace: labels.get(panes.get(pane).workspace_id) ?? '', slept_at: new Date(s.slept_at).toISOString() }))
+    .map(([pane, s]) => ({
+      name: s.name || s.title,
+      pane,
+      session: s.session,
+      workspace: labels.get(panes.get(pane).workspace_id) ?? '',
+      slept_at: new Date(s.slept_at).toISOString(),
+      exited: !!s.exited,
+    }))
 }
 
 // ───────────── waking and delivering ─────────────
@@ -181,9 +203,14 @@ async function wake(pane, session) {
     return { retry: 120, note: '⏳ Панель сессии занята другой программой. Доставлю, когда она освободится.' }
   }
   log(`waking ${session} in ${pane}`)
+  // Resume looks the session up by folder: go back to the session's one if the shell left it
+  // (after an exit by hand). `cd '<dir>'; ` works in PowerShell, bash, zsh and fish alike.
+  const was = sessions[pane]?.cwd
+  const now = (await herdr(['pane', 'get', pane])).pane.cwd
+  const cd = was && now && samePath(was) !== samePath(now) && !/['"]/.test(was) ? `cd '${was}'; ` : ''
   // Clear the resume command left at the prompt: Esc reverts the line in PowerShell, Ctrl+U in bash, zsh and fish.
   await herdr(['pane', 'send-keys', pane, process.platform === 'win32' ? 'esc' : 'ctrl+u'])
-  await herdr(['pane', 'run', pane, wakeCommand(session)])
+  await herdr(['pane', 'run', pane, cd + wakeCommand(session)])
   const state = await waitReady(pane, cfg.wakeTimeoutSec * 1000)
   if (state === 'ready') {
     markAwake(pane)

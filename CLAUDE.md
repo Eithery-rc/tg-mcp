@@ -9,6 +9,9 @@ Streamable HTTP. See README.md for the user-facing picture.
 - `src/mcp.ts` — per-session McpServer: tools + `claude/channel` capabilities
 - `src/telegram.ts` — minimal Bot API client; `src/store.ts` — bun:sqlite (topics, inbox, router leases, panes)
 - `src/format.ts` — Markdown → Telegram HTML + chunking (tested in `format.test.ts`)
+- `herdr-wake/` — separate herdr plugin (Node, no dependencies): the router for `ROUTER=1` plus an
+  idle-session reaper. Own README and tests (`npm test` inside it). Users install it with
+  `herdr plugin install Eithery-rc/tg-mcp/herdr-wake`, so keep its manifest and paths working from a fresh clone.
 
 ## Rules
 - Secrets live only in `.env` (git-ignored). `.githooks/pre-commit` blocks bot tokens and

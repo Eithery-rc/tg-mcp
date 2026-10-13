@@ -1,0 +1,40 @@
+id = "herdr-wake"
+name = "Wake"
+version = "0.1.0"
+min_herdr_version = "0.9.2"
+description = "Puts idle Claude sessions to sleep and wakes them through cldt for Telegram messages and SendMessage"
+platforms = ["windows", "linux", "macos"]
+
+# Reopens the router pane after a herdr restart.
+[[startup]]
+command = ["node", "src/start.mjs"]
+
+[[actions]]
+id = "start"
+title = "Start the Telegram router"
+contexts = ["workspace"]
+command = ["node", "src/start.mjs"]
+
+[[actions]]
+id = "install-hooks"
+title = "Install the Claude Code hooks (ListAgents, SendMessage)"
+contexts = ["workspace"]
+command = ["node", "src/install-hooks.mjs"]
+
+[[actions]]
+id = "sleep"
+title = "Put this Claude session to sleep"
+contexts = ["pane"]
+command = ["node", "src/action.mjs", "sleep"]
+
+[[actions]]
+id = "wake"
+title = "Wake the Claude session in this pane"
+contexts = ["pane"]
+command = ["node", "src/action.mjs", "wake"]
+
+[[panes]]
+id = "router"
+title = "Telegram router"
+placement = "tab"
+command = ["node", "src/router.mjs"]

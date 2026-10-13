@@ -10,7 +10,7 @@
 //   node src/router.mjs --deliver <key> <text>  route one message by hand, without the server
 //   node src/router.mjs --reap-dry              show what the reaper would put to sleep now
 //
-// Local API on 127.0.0.1:<port>: GET /status, GET /sleeping, POST /wake {target},
+// Local API on 127.0.0.1:<port>: GET /status, GET /sleeping, GET /awake, POST /wake {target},
 // POST /sleep {target}; target is a session name, a pane id or a session id.
 import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import http from 'node:http'
@@ -296,6 +296,23 @@ async function reapRound() {
 
 // ───────────── local API ─────────────
 
+/** Running Claude sessions in herdr: since when they are idle or busy, and when they sleep. */
+function awake(snap, live) {
+  const on = cfg.reaper.enabled
+  return plan(snap, live)
+    .filter(p => p.status)
+    .map(p => ({
+      name: p.name,
+      pane: p.pane,
+      workspace: p.workspace,
+      status: p.status,
+      since: new Date(p.since).toISOString(),
+      // minutes until the reaper puts it to sleep; null when it will not, `kept` says why
+      sleeps_in_min: !on ? null : p.sleep ? 0 : p.waiting ? cfg.reaper.idleMinutes - p.idleMin : null,
+      kept: !on ? 'reaper off' : p.sleep || p.waiting ? null : p.reason,
+    }))
+}
+
 function findSession(target, snap) {
   const t = String(target ?? '').replace(/\s*\[[0-9a-f]+\]\s*$/i, '').trim().toLowerCase()
   const panes = new Map(snap.panes.map(p => [p.pane_id, p]))
@@ -351,6 +368,7 @@ async function api(req) {
   const path = req.url.split('?')[0]
   if (req.method === 'GET' && path === '/status') return { ...status, reaper: cfg.reaper, sleeping: sleeping(await freshSnapshot()), sessions }
   if (req.method === 'GET' && path === '/sleeping') return sleeping(await freshSnapshot())
+  if (req.method === 'GET' && path === '/awake') return awake(await freshSnapshot(), liveSessions())
   if (req.method === 'POST' && path === '/wake') return wakeTarget((await readBody(req)).target)
   if (req.method === 'POST' && path === '/sleep') return sleepTarget((await readBody(req)).target)
   return null

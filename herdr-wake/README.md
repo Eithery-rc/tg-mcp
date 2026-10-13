@@ -11,7 +11,9 @@ when there is work for them:
   the router long-polls tg-mcp, finds the pane a message is for, wakes the session there if
   it sleeps, and types the message in.
 - **Handoff between sessions.** `ListAgents` also lists the sleeping sessions, and a
-  `SendMessage` to a sleeping one wakes it first (Claude Code hooks, see Setup).
+  `SendMessage` to a sleeping one wakes it first (Claude Code hooks, see Setup). For the
+  running ones it adds how long each has been idle or busy and when it goes to sleep;
+  `ListAgents` itself only shows when a session's process started.
 
 Waking runs `wakeCommand` in the session's pane (`claude --resume <session id>` by
 default; point it at your own launcher if you have one), so the session comes back in the
@@ -113,6 +115,7 @@ it has written an explicit `hasTrustDialogAccepted: false` for it into `~/.claud
 | `reaper.idleMinutes` | `60` | how long a session must sit idle |
 | `reaper.exclude` | `[]` | session names, workspace labels or titles never to put to sleep; exact (any case) or `"/regex/"` |
 | `reaper.maxPerRound` | `3` | sessions put to sleep per minute at most |
+| `listSleepingDays` | `7` | `ListAgents` lists sessions asleep for less than this (at most 15) and only counts the rest; a session sleeps until its pane is closed, so the full list keeps growing. All of them stay wakeable by name |
 | `wakeCommand` | `claude --resume {session}` | command typed into the pane to resume a session |
 | `wakeTimeoutSec` | `120` | how long to wait for a resumed session |
 | `url`, `authorization` | from `~/.claude.json` | tg-mcp base url (without `/mcp`) and the `Authorization` header value |
@@ -125,7 +128,8 @@ it has written an explicit `hasTrustDialogAccepted: false` for it into `~/.claud
 
 - herdr actions for the focused pane: `herdr-wake.sleep`, `herdr-wake.wake` (bind them to
   keys with `[[keys.command]]`, `type = "plugin_action"`).
-- Local API on `127.0.0.1:12421`: `GET /status`, `GET /sleeping`,
+- Local API on `127.0.0.1:12421`: `GET /status`, `GET /sleeping`, `GET /awake` (running
+  sessions: status, since when, minutes until sleep or why they stay up),
   `POST /wake {"target": ...}`, `POST /sleep {"target": ...}`; a target is a session name,
   a pane id or a session id.
 - Log: `router.log` in the plugin state directory (`%LOCALAPPDATA%\herdr\plugins\herdr-wake`

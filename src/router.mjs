@@ -20,7 +20,7 @@ import { hasSchedules, liveSessions, transcriptPath } from './claude.mjs'
 import { herdr, herdrText, snapshot } from './herdr.mjs'
 import { reapPlan } from './reaper.mjs'
 import { formatPrompt, resolve } from './route.mjs'
-import { inputDraft, isChannelsWarning, isTrustDialog } from './screen.mjs'
+import { inputDraft, isChannelsWarning, isExitTasksDialog, isTrustDialog } from './screen.mjs'
 
 const PLUGIN_ID = process.env.HERDR_PLUGIN_ID || 'herdr-wake'
 const STATE_DIR =
@@ -49,7 +49,7 @@ function loadConfig() {
   const c = {
     server: 'telegram',
     port: 12421, // local API; also keeps the router single-instance
-    wakeCommand: 'cldt --resume {session}',
+    wakeCommand: 'claude --resume {session}', // e.g. your own launcher: "cldt --resume {session}"
     wakeTimeoutSec: 120,
     pollTimeoutSec: 25,
     ...file,
@@ -181,7 +181,8 @@ async function wake(pane, session) {
     return { retry: 120, note: '⏳ Панель сессии занята другой программой. Доставлю, когда она освободится.' }
   }
   log(`waking ${session} in ${pane}`)
-  await herdr(['pane', 'send-keys', pane, 'esc']) // clears the resume command left at the prompt
+  // Clear the resume command left at the prompt: Esc reverts the line in PowerShell, Ctrl+U in bash, zsh and fish.
+  await herdr(['pane', 'send-keys', pane, process.platform === 'win32' ? 'esc' : 'ctrl+u'])
   await herdr(['pane', 'run', pane, wakeCommand(session)])
   const state = await waitReady(pane, cfg.wakeTimeoutSec * 1000)
   if (state === 'ready') {
@@ -255,7 +256,18 @@ function putToSleep(pane, p) {
       save()
       await herdr(['agent', 'prompt', pane, '/exit'])
       for (const deadline = Date.now() + 30_000; Date.now() < deadline; await sleep(1000)) {
-        if ((await herdr(['pane', 'get', pane])).pane.agent) continue
+        const after = (await herdr(['pane', 'get', pane])).pane
+        if (after.agent === 'claude' && after.agent_status === 'blocked') {
+          // "The following will stop when you exit": it runs background work after all. Stay.
+          if (isExitTasksDialog(await herdrText(['pane', 'read', pane, '--source', 'visible']))) {
+            await herdr(['pane', 'send-keys', pane, 'esc'])
+            delete sessions[pane].slept_at
+            save()
+            log(`${p.name} in ${pane} has background tasks, left it running`)
+            return false
+          }
+        }
+        if (after.agent) continue
         sessions[pane].slept_at = Date.now() // views taken before this still show Claude
         save()
         await herdr(['pane', 'rename', pane, `💤 ${p.name}`]).catch(() => {})

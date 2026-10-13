@@ -51,6 +51,11 @@ export function inputDraft(ansiScreen) {
   return null
 }
 
+/** /exit in a session with background shells or scheduled tasks asks whether to stop them. */
+export function isExitTasksDialog(plainScreen) {
+  return /will stop when you exit/.test(plainScreen)
+}
+
 /** Claude asks whether to trust a folder that has no trust recorded (or an explicit "no"). */
 export function isTrustDialog(plainScreen) {
   return /Yes, I trust this folder/.test(plainScreen)

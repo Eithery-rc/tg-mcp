@@ -1,6 +1,12 @@
 // Pure routing decisions, kept apart from the router loop so they can be tested.
 import { tabKeys } from './topics.mjs'
 
+/** A path in a comparable form: one kind of slash, no trailing slash, case-insensitive with a drive letter. */
+export function samePath(p) {
+  const s = String(p).replace(/\\/g, '/').replace(/\/+$/, '')
+  return /^[a-z]:/i.test(s) ? s.toLowerCase() : s
+}
+
 /** Sessions send X-Herdr-Pane as "<machine>:<pane id>"; a hint from another machine is no use here. */
 export function localPane(hint, machine) {
   if (!hint) return null
@@ -24,9 +30,11 @@ export function resolve(item, snap, known, machine) {
   }
   add(localPane(item.pane, machine))
   for (const hint of item.live_panes ?? []) add(localPane(hint, machine))
+  // The key names a herdr tab (the launcher in tg-mcp's README) or, by default, a working directory.
   const tabs = tabKeys(snap).get(item.key) ?? []
+  const dir = samePath(item.key)
   snap.panes
-    .filter(p => tabs.includes(p.tab_id))
+    .filter(p => tabs.includes(p.tab_id) || (p.cwd && samePath(p.cwd) === dir))
     .sort((a, b) => (b.agent === 'claude') - (a.agent === 'claude') || (seq.get(b.pane_id) ?? 0) - (seq.get(a.pane_id) ?? 0))
     .forEach(p => add(p.pane_id))
 

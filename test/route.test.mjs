@@ -46,6 +46,12 @@ test('the server pane hint comes first, but only from this machine', () => {
   assert.equal(resolve({ key: 'topic:other', pane: 'LAPTOP2:w2:p1' }, snap, known, 'pc'), null)
 })
 
+test('a key that is a working directory finds the pane in it', () => {
+  const s = { ...snap, panes: [...snap.panes, { pane_id: 'w2:p2', tab_id: 'w2:t1', cwd: 'C:\\Work\\BB\\', agent: 'claude', terminal_title_stripped: 'bb' }] }
+  assert.equal(resolve({ key: 'C:/Work/BB' }, s, {}, 'PC').pane, 'w2:p2')
+  assert.equal(resolve({ key: '/home/me/proj' }, s, {}, 'PC'), null)
+})
+
 test('nothing to deliver to', () => {
   assert.equal(resolve({ key: 'topic:Billing / hotfix' }, snap, {}, 'PC'), null)
   assert.equal(resolve({ key: 'unknown' }, snap, {}, 'PC'), null)

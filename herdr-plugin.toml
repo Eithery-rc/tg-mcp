@@ -16,6 +16,12 @@ contexts = ["workspace"]
 command = ["node", "src/start.mjs"]
 
 [[actions]]
+id = "install-hooks"
+title = "Install the Claude Code hooks (ListAgents, SendMessage)"
+contexts = ["workspace"]
+command = ["node", "src/install-hooks.mjs"]
+
+[[actions]]
 id = "sleep"
 title = "Put this Claude session to sleep"
 contexts = ["pane"]

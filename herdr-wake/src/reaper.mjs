@@ -13,7 +13,9 @@ export function matchesAny(patterns, values) {
  * stays up. `live` maps session id -> Claude's registry entry (~/.claude/sessions). A session
  * sleeps only when Claude itself reports it idle (not busy, not running a background shell)
  * for `idleMinutes`, herdr agrees, the pane is not focused, it is not excluded, and it has no
- * scheduled jobs that would die with it.
+ * scheduled jobs that would die with it. Entries of registered sessions also carry `status`,
+ * `since` (when Claude last changed it) and `idleMin`; `waiting: true` marks the ones that
+ * only need more idle time.
  */
 export function reapPlan(snap, live, { idleMinutes, exclude = [], now = Date.now(), scheduled = () => false }) {
   const wsLabel = new Map(snap.workspaces.map(w => [w.workspace_id, w.label]))
@@ -23,19 +25,21 @@ export function reapPlan(snap, live, { idleMinutes, exclude = [], now = Date.now
     const id = p.agent_session?.value
     const s = id ? live.get(id) : undefined
     const name = s?.name || p.terminal_title_stripped || p.pane_id
-    const keep = reason => plan.push({ pane: p.pane_id, name, sleep: false, reason })
+    const workspace = wsLabel.get(p.workspace_id) ?? ''
     if (!s) {
-      keep('not in the session registry')
+      plan.push({ pane: p.pane_id, name, workspace, sleep: false, reason: 'not in the session registry' })
       continue
     }
     const idleMin = Math.round((now - s.statusUpdatedAt) / 60_000)
-    if (s.status !== 'idle') keep(`status ${s.status}`)
+    const base = { pane: p.pane_id, name, workspace, status: s.status, since: s.statusUpdatedAt, idleMin }
+    const keep = (reason, extra) => plan.push({ ...base, sleep: false, reason, ...extra })
+    if (matchesAny(exclude, [s.name, workspace, p.terminal_title_stripped])) keep('excluded')
+    else if (s.status !== 'idle') keep(`status ${s.status}`)
     else if (p.agent_status !== 'idle' && p.agent_status !== 'done') keep(`herdr says ${p.agent_status}`)
-    else if (idleMin < idleMinutes) keep(`idle ${idleMin} min`)
-    else if (p.focused) keep('focused')
-    else if (matchesAny(exclude, [s.name, wsLabel.get(p.workspace_id), p.terminal_title_stripped])) keep('excluded')
     else if (scheduled(s)) keep('has scheduled jobs')
-    else plan.push({ pane: p.pane_id, name, sleep: true, session: id, cwd: s.cwd, idleMin, reason: `idle ${idleMin} min` })
+    else if (idleMin < idleMinutes) keep(`idle ${idleMin} min`, { waiting: true })
+    else if (p.focused) keep('focused')
+    else plan.push({ ...base, sleep: true, session: id, cwd: s.cwd, reason: `idle ${idleMin} min` })
   }
   return plan
 }

@@ -50,7 +50,21 @@ test('who sleeps and why the rest stays up', () => {
     'w1:p6': 'has scheduled jobs',
     'w1:p7': 'not in the session registry',
   })
-  assert.deepEqual(plan[0], { pane: 'w1:p1', name: 'Billing-master', sleep: true, session: 'a', cwd: 'C:\\Work\\BB', idleMin: 90, reason: 'idle 90 min' })
+  assert.deepEqual(plan[0], {
+    pane: 'w1:p1',
+    name: 'Billing-master',
+    workspace: 'Billing',
+    status: 'idle',
+    since: min(90),
+    idleMin: 90,
+    sleep: true,
+    session: 'a',
+    cwd: 'C:\\Work\\BB',
+    reason: 'idle 90 min',
+  })
+  // only sessions that just need more idle time count down to sleep
+  assert.deepEqual(plan.filter(p => p.waiting).map(p => p.pane), ['w1:p2'])
+  assert.equal(plan.find(p => p.pane === 'w1:p3').idleMin, 300)
 })
 
 test('exclude patterns', () => {

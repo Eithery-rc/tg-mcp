@@ -25,7 +25,8 @@ same environment it was started with.
    later and says so once. If no pane fits, the message goes back to tg-mcp's queue with a
    note, and the agent gets it when it connects.
 
-cldt starts Claude with development channels, which asks for a confirmation on start. The
+With the router in place `cldt` no longer starts Claude with development channels
+(since 2026-10-13). Sessions started the old way ask for a confirmation on start; the
 router answers that one dialog (only that one) when it wakes a session or finds one
 stuck on it. The folder trust question ("Yes, I trust this folder") is left to you: the
 router says so in the topic and delivers once you have answered. Claude can ask it for a

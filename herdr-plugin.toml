@@ -1,0 +1,22 @@
+id = "herdr-wake"
+name = "Wake"
+version = "0.1.0"
+min_herdr_version = "0.9.2"
+description = "Delivers Telegram messages from tg-mcp into the right Claude pane, resuming a stopped session through cldt"
+platforms = ["windows", "linux", "macos"]
+
+# Reopens the router pane after a herdr restart.
+[[startup]]
+command = ["node", "src/start.mjs"]
+
+[[actions]]
+id = "start"
+title = "Start the Telegram router"
+contexts = ["workspace"]
+command = ["node", "src/start.mjs"]
+
+[[panes]]
+id = "router"
+title = "Telegram router"
+placement = "tab"
+command = ["node", "src/router.mjs"]

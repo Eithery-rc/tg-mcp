@@ -10,7 +10,7 @@ import { homedir, hostname } from 'node:os'
 import { join } from 'node:path'
 import { herdr, herdrText, snapshot } from './herdr.mjs'
 import { formatPrompt, resolve } from './route.mjs'
-import { inputDraft, isChannelsWarning } from './screen.mjs'
+import { inputDraft, isChannelsWarning, isTrustDialog } from './screen.mjs'
 
 const PLUGIN_ID = process.env.HERDR_PLUGIN_ID || 'herdr-wake'
 const STATE_DIR =
@@ -99,9 +99,10 @@ function withPane(pane, fn) {
 }
 
 /**
- * Wait until the pane's Claude is ready for input: 'ready', 'blocked' or 'timeout'. cldt
- * starts Claude with development channels, which first asks for a confirmation (also after
- * a herdr restart resumes panes through cldt); that one dialog is answered here.
+ * Wait until the pane's Claude is ready for input: 'ready', 'trust', 'blocked' or 'timeout'.
+ * cldt starts Claude with development channels, which first asks for a confirmation (also
+ * after a herdr restart resumes panes through cldt); that one dialog is answered here. The
+ * folder trust question is left to the user.
  */
 async function waitReady(pane, timeoutMs) {
   let confirms = 0
@@ -111,7 +112,9 @@ async function waitReady(pane, timeoutMs) {
     if (p.agent !== 'claude') continue
     if (p.agent_status === 'idle' || p.agent_status === 'done') return 'ready'
     if (p.agent_status !== 'blocked' || Date.now() - lastConfirm < 5000) continue
-    if (confirms >= 3 || !isChannelsWarning(await herdrText(['pane', 'read', pane, '--source', 'visible']))) return 'blocked'
+    const screen = await herdrText(['pane', 'read', pane, '--source', 'visible'])
+    if (isTrustDialog(screen)) return 'trust'
+    if (confirms >= 3 || !isChannelsWarning(screen)) return 'blocked'
     log(`confirming the development channels warning in ${pane}`)
     await herdr(['pane', 'send-keys', pane, 'enter'])
     confirms++
@@ -121,6 +124,7 @@ async function waitReady(pane, timeoutMs) {
 }
 
 const BLOCKED = { retry: 60, note: '⏳ Сессия ждёт решения в терминале. Доставлю, когда освободится.' }
+const TRUST = { retry: 60, note: '🔐 Сессия спрашивает, доверять ли папке проекта. Ответь в терминале, и я доставлю.' }
 
 /** Resume the pane's last session with cldt and wait until Claude is ready for input. */
 async function wake(pane, session) {
@@ -132,13 +136,17 @@ async function wake(pane, session) {
   await herdr(['pane', 'run', pane, cfg.wakeCommand.replace('{session}', session)])
   const state = await waitReady(pane, cfg.wakeTimeoutSec * 1000)
   if (state === 'ready') return { ok: true }
-  return state === 'blocked' ? BLOCKED : { retry: 60, note: '⏳ Сессия не успела запуститься, попробую ещё раз.' }
+  if (state === 'timeout') return { retry: 60, note: '⏳ Сессия не успела запуститься, попробую ещё раз.' }
+  return state === 'trust' ? TRUST : BLOCKED
 }
 
 /** Type the prompt into a running Claude, unless it is waiting for a decision or the user is typing. */
 async function deliverLive(pane, text) {
   const agent = (await herdr(['agent', 'get', pane])).agent
-  if (agent.agent_status === 'blocked' && (await waitReady(pane, 30_000)) !== 'ready') return BLOCKED
+  if (agent.agent_status === 'blocked') {
+    const state = await waitReady(pane, 30_000)
+    if (state !== 'ready') return state === 'trust' ? TRUST : BLOCKED
+  }
   const draft = inputDraft(await herdrText(['agent', 'read', pane, '--source', 'recent', '--lines', '40', '--ansi']))
   if (draft === null) return { retry: 30, note: '⏳ В сессии открыт диалог. Доставлю, когда закроется.' }
   if (draft) return { retry: 30, note: '✍️ В поле ввода сессии недописанный текст. Доставлю, когда оно освободится.' }

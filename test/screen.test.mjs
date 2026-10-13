@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { inputDraft, isChannelsWarning, nonDimText } from '../src/screen.mjs'
+import { inputDraft, isChannelsWarning, isTrustDialog, nonDimText } from '../src/screen.mjs'
 
 const E = '\x1b'
 const rule = `${E}[0m${E}[38;2;136;136;136m${'─'.repeat(60)} Billing-master ─${E}[0m`
@@ -43,4 +43,10 @@ test('the development channels warning is recognised', () => {
   const s = `  WARNING: Loading development channels\n\n  Channels: server:telegram\n\n  ❯ 1. I am using this for local development\n    2. Exit`
   assert.equal(isChannelsWarning(s), true)
   assert.equal(isChannelsWarning('Do you trust the files in this folder?\n❯ 1. Yes, proceed'), false)
+})
+
+test('the folder trust question is recognised and is not the channels warning', () => {
+  const s = ' Accessing workspace:\n\n C:/Work/Personal/herdr-wake\n\n ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel'
+  assert.equal(isTrustDialog(s), true)
+  assert.equal(isChannelsWarning(s), false)
 })

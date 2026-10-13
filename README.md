@@ -27,7 +27,10 @@ same environment it was started with.
 
 cldt starts Claude with development channels, which asks for a confirmation on start. The
 router answers that one dialog (only that one) when it wakes a session or finds one
-stuck on it.
+stuck on it. The folder trust question ("Yes, I trust this folder") is left to you: the
+router says so in the topic and delivers once you have answered. Claude can ask it for a
+folder that inherited trust from a parent before, once it has written an explicit
+`hasTrustDialogAccepted: false` for it into `~/.claude.json`.
 
 ## Setup
 

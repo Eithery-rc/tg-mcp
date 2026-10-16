@@ -7,7 +7,7 @@ import { asciiKey, tabKeys } from '../src/topics.mjs'
 const snap = {
   workspaces: [
     { workspace_id: 'w1', label: 'Billing' },
-    { workspace_id: 'w2', label: 'Блюбениан монитор (2)' },
+    { workspace_id: 'w2', label: 'Счета монитор (2)' },
   ],
   tabs: [
     { tab_id: 'w1:t2', workspace_id: 'w1', label: 'hotfix', number: 2 },
@@ -28,7 +28,7 @@ test('routing keys follow the claude-tg launcher', () => {
   assert.deepEqual(keys.get('topic:Billing'), ['w1:t1'])
   assert.deepEqual(keys.get('topic:Billing / hotfix'), ['w1:t2'])
   assert.deepEqual(keys.get('topic:  (2)'), ['w2:t1']) // non-ASCII stripped like claude-tg does, inner spaces stay
-  assert.equal(asciiKey('topic:Блюбениан монитор'), 'topic:')
+  assert.equal(asciiKey('topic:Счета монитор'), 'topic:')
 })
 
 test('a running Claude in the tab wins', () => {
@@ -47,8 +47,8 @@ test('the server pane hint comes first, but only from this machine', () => {
 })
 
 test('a key that is a working directory finds the pane in it', () => {
-  const s = { ...snap, panes: [...snap.panes, { pane_id: 'w2:p2', tab_id: 'w2:t1', cwd: 'C:\\Work\\BB\\', agent: 'claude', terminal_title_stripped: 'bb' }] }
-  assert.equal(resolve({ key: 'C:/Work/BB' }, s, {}, 'PC').pane, 'w2:p2')
+  const s = { ...snap, panes: [...snap.panes, { pane_id: 'w2:p2', tab_id: 'w2:t1', cwd: 'C:\\Work\\Acme\\', agent: 'claude', terminal_title_stripped: 'acme' }] }
+  assert.equal(resolve({ key: 'C:/Work/Acme' }, s, {}, 'PC').pane, 'w2:p2')
   assert.equal(resolve({ key: '/home/me/proj' }, s, {}, 'PC'), null)
 })
 

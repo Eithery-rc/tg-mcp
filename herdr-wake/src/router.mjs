@@ -1,7 +1,7 @@
 // herdr-wake: runs as the plugin's "router" pane.
 //
 // Router: long-polls tg-mcp's /router/wait, finds the herdr pane a message is for, resumes
-// the Claude session there through cldt when it has exited, types the message in, and acks.
+// the Claude session there through wakeCommand when it has exited, types the message in, and acks.
 // Reaper: puts Claude sessions that sat idle for an hour to sleep (/exit, the pane stays,
 // marked 💤) and wakes them again for a Telegram message, a SendMessage (see hook.mjs) or
 // the local API.
@@ -49,7 +49,7 @@ function loadConfig() {
   const c = {
     server: 'telegram',
     port: 12421, // local API; also keeps the router single-instance
-    wakeCommand: 'claude --resume {session}', // e.g. your own launcher: "cldt --resume {session}"
+    wakeCommand: 'claude --resume {session}', // e.g. the claude-tg launcher: "claude-tg --resume {session}"
     wakeTimeoutSec: 120,
     pollTimeoutSec: 25,
     ...file,
@@ -196,7 +196,7 @@ async function waitReady(pane, timeoutMs) {
 const BLOCKED = { retry: 60, note: '⏳ Сессия ждёт решения в терминале. Доставлю, когда освободится.' }
 const TRUST = { retry: 60, note: '🔐 Сессия спрашивает, доверять ли папке проекта. Ответь в терминале, и я доставлю.' }
 
-/** Resume the pane's last session with cldt and wait until Claude is ready for input. */
+/** Resume the pane's last session with wakeCommand and wait until Claude is ready for input. */
 async function wake(pane, session) {
   const info = (await herdr(['pane', 'process-info', '--pane', pane])).process_info
   if (info.foreground_processes.some(p => p.pid !== info.shell_pid)) {

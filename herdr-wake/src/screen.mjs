@@ -61,7 +61,7 @@ export function isTrustDialog(plainScreen) {
   return /Yes, I trust this folder/.test(plainScreen)
 }
 
-/** cldt starts Claude with development channels, which asks for a confirmation first. */
+/** A launcher that starts Claude with development channels gets a confirmation dialog first. */
 export function isChannelsWarning(plainScreen) {
   return /Loading development channels/.test(plainScreen) && /❯\s*1\.\s*I am using this for local development/.test(plainScreen)
 }

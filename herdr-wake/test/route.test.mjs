@@ -23,11 +23,11 @@ const snap = {
   agents: [{ pane_id: 'w1:p1', state_change_seq: 10 }],
 }
 
-test('routing keys follow cldt', () => {
+test('routing keys follow the claude-tg launcher', () => {
   const keys = tabKeys(snap)
   assert.deepEqual(keys.get('topic:Billing'), ['w1:t1'])
   assert.deepEqual(keys.get('topic:Billing / hotfix'), ['w1:t2'])
-  assert.deepEqual(keys.get('topic:  (2)'), ['w2:t1']) // non-ASCII stripped like cldt does, inner spaces stay
+  assert.deepEqual(keys.get('topic:  (2)'), ['w2:t1']) // non-ASCII stripped like claude-tg does, inner spaces stay
   assert.equal(asciiKey('topic:Блюбениан монитор'), 'topic:')
 })
 

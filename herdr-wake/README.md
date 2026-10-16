@@ -16,8 +16,8 @@ when there is work for them:
   `ListAgents` itself only shows when a session's process started.
 
 Waking runs `wakeCommand` in the session's pane (`claude --resume <session id>` by
-default; point it at your own launcher if you have one), so the session comes back in the
-same pane, under the same name, with the same transcript.
+default; point it at your own launcher, such as [claude-tg](#claude-tg)), so the session
+comes back in the same pane, under the same name, with the same transcript.
 
 Tested on Windows (PowerShell panes). Linux and macOS should work, but have not been tried.
 
@@ -33,7 +33,11 @@ Tested on Windows (PowerShell panes). Linux and macOS should work, but have not 
    ```
 
 3. Install the Claude Code hooks (they make sleeping sessions visible in `ListAgents` and
-   wake them on `SendMessage`; both do nothing while the router is not running):
+   wake them on `SendMessage`; both do nothing while the router is not running). A third
+   one, on SessionStart, matters only with a `wakeCommand` of your own: herdr then resumes
+   sessions through it after a herdr restart too, instead of a plain `claude --resume`. The
+   hooks run a copy of `hook.mjs` in the plugin's config folder: run the action again after
+   updating the plugin.
 
    ```bash
    herdr plugin action invoke herdr-wake.install-hooks
@@ -60,9 +64,37 @@ Tested on Windows (PowerShell panes). Linux and macOS should work, but have not 
 
    The machine prefix keeps a hint from another machine's herdr from matching a local pane.
 
+6. Optional, a Telegram topic per herdr tab: the [claude-tg](#claude-tg) launcher.
+
 The tg-mcp url and token are taken from the `telegram` MCP server in `~/.claude.json`.
 Sessions can then drop `--dangerously-load-development-channels` and `X-Channel`: the
 router types your messages into their pane instead.
+
+## claude-tg
+
+A launcher that starts Claude Code with `TG_KEY` set to the herdr tab's topic:
+`topic:<workspace>` for a workspace's first tab, `topic:<workspace> / <tab label>` for the
+others, non-ASCII characters dropped (headers must be ASCII); the folder outside herdr, or
+when nothing of the workspace's name is left. The `telegram` MCP server sends it as
+`X-Cwd: ${TG_KEY:-}`, and the router finds the tab by the same key.
+
+```bash
+herdr plugin action invoke herdr-wake.install-launcher
+```
+
+That puts `claude-tg` into `~/.local/bin` (sh for Git Bash, Linux and macOS, `.cmd` for
+PowerShell), with its key script beside it as `claude-tg-key.mjs`, so it keeps working when
+the plugin moves; run the action again after an update to refresh that copy. The folder must
+be on PATH (the action says when it is not). When a file of these names is not the plugin's,
+it installs nothing and says so. Its arguments go to `claude` as they are:
+
+```json
+{ "wakeCommand": "claude-tg --dangerously-skip-permissions --resume {session}" }
+```
+
+In the agent board's config.json: `"launch": { "claude": ["claude-tg", "--dangerously-skip-permissions"] }`
+(leave out the flag if you run Claude with permission prompts). See
+[tg-mcp's README](../README.md#herdr-launcher) for the server side.
 
 ## Reaper
 
@@ -95,8 +127,8 @@ folder if the shell has left it.
 
 1. Candidate panes: the pane behind the bot message you replied to, panes connected to
    tg-mcp for the topic, then the panes the topic's routing key names. A key of the form
-   `topic:<workspace>` / `topic:<workspace> / <tab>` names a herdr tab (the launcher
-   example in tg-mcp's README, non-ASCII stripped); any other key is matched against the
+   `topic:<workspace>` / `topic:<workspace> / <tab>` names a herdr tab (what
+   [claude-tg](#claude-tg) sends, non-ASCII stripped); any other key is matched against the
    panes' working directories.
 2. A pane running Claude wins. Otherwise a pane whose last Claude session the router has
    seen (it records them every 15 seconds) is resumed there.
@@ -125,7 +157,7 @@ it has written an explicit `hasTrustDialogAccepted: false` for it into `~/.claud
 | `reaper.exclude` | `[]` | session names, workspace labels or titles never to put to sleep; exact (any case) or `"/regex/"` |
 | `reaper.maxPerRound` | `3` | sessions put to sleep per minute at most |
 | `listSleepingDays` | `7` | `ListAgents` lists sessions asleep for less than this (at most 15) and only counts the rest; a session sleeps until its pane is closed, so the full list keeps growing. All of them stay wakeable by name |
-| `wakeCommand` | `claude --resume {session}` | command typed into the pane to resume a session |
+| `wakeCommand` | `claude --resume {session}` | command typed into the pane to resume a session; with the hooks installed, herdr resumes through it after a restart too, when it is a command name on PATH followed by plain words (`claude-tg --resume {session}`, not a path) |
 | `wakeTimeoutSec` | `120` | how long to wait for a resumed session |
 | `url`, `authorization` | from `~/.claude.json` | tg-mcp base url (without `/mcp`) and the `Authorization` header value |
 | `server` | `telegram` | MCP server in `~/.claude.json` to take them from |

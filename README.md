@@ -140,11 +140,16 @@ herdr plugin action invoke herdr-wake.install-launcher
 ```
 
 That puts `claude-tg` into `~/.local/bin` (a sh script for Git Bash, Linux and macOS, a `.cmd`
-for PowerShell). It sets `TG_KEY` to the tab's routing key (non-ASCII characters dropped,
-since headers must be ASCII) and runs `claude` with whatever arguments it got: `claude-tg`,
-`claude-tg --dangerously-skip-permissions`, `claude-tg --resume <session id>`. Nothing stays
-running beside Claude: the sh script replaces itself with it. Add the server with
-`--header 'X-Cwd: ${TG_KEY:-}'`, which works from PowerShell too, unlike `${PWD}`.
+for PowerShell; that folder must be on PATH, the install says when it is not). It sets
+`TG_KEY` to the tab's routing key (non-ASCII characters dropped, since headers must be ASCII)
+and runs `claude` with whatever arguments it got: `claude-tg`,
+`claude-tg --dangerously-skip-permissions`, `claude-tg --resume <session id>`. On Linux and
+macOS the sh script replaces itself with Claude; on Windows a small cmd.exe waits for it. Run
+the action again after updating the plugin: the key script is a copy beside the launchers.
+
+Add the server with `--header 'X-Cwd: ${TG_KEY:-}'`, which works from PowerShell too, unlike
+`${PWD}`. A session started without the launcher then sends an empty key and lands in the
+`unknown` topic, so start them all through it.
 
 Use it wherever Claude starts:
 

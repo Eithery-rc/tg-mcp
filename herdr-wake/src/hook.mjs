@@ -54,19 +54,22 @@ function activity(s) {
 }
 
 /**
- * wakeCommand for a session the way herdr takes a resume command, one word per argument. Null
- * for the default (herdr resumes that way already) and for a command with more than plain words.
+ * wakeCommand for a session the way herdr takes a resume command, one word per argument: a
+ * command name (herdr refuses a path there), then plain words. Null for the default (herdr
+ * resumes that way already) and for anything else.
  */
 export function resumeArgs(wakeCommand, session) {
   const command = String(wakeCommand ?? '').trim()
-  if (!command || command === 'claude --resume {session}' || !/^[\w./\\:~+={}-]+(\s+[\w./\\:~+={}-]+)*$/.test(command)) return null
+  if (!command || command === 'claude --resume {session}' || !/^[\w.-]+(\s+[\w./\\:+={}-]+)*$/.test(command)) return null
   return command.replaceAll('{session}', session).split(/\s+/)
 }
 
 const mode = process.argv[2]
-const input = mode === 'report' || !mode ? {} : JSON.parse(readFileSync(0, 'utf8') || '{}')
+// Only the hook modes read Claude's JSON on stdin (a test that imports this file reads nothing).
+const HOOKS = ['pre-send', 'post-list', 'session-start']
 
 try {
+  const input = HOOKS.includes(mode) ? JSON.parse(readFileSync(0, 'utf8') || '{}') : {}
   if (mode === 'pre-send') {
     const to = String(input.tool_input?.to ?? '').replace(/\s*\[[0-9a-f]+\]\s*$/i, '').trim().toLowerCase()
     const target = to && (await api('/sleeping', null, 3000)).find(s => s.name.toLowerCase() === to)
@@ -127,7 +130,8 @@ try {
   } else if (mode === 'session-start') {
     // Claude starts before herdr sees it in the pane: report from a process of its own, so that
     // Claude's start does not wait.
-    if (resumeArgs(cfg.wakeCommand, 'x') && input.hook_event_name === 'SessionStart' && !input.agent_id && input.session_id && process.env.HERDR_PANE_ID) {
+    const inHerdr = process.env.HERDR_ENV === '1' && process.env.HERDR_PANE_ID
+    if (inHerdr && resumeArgs(cfg.wakeCommand, 'x') && input.hook_event_name === 'SessionStart' && !input.agent_id && input.session_id) {
       spawn(process.execPath, [fileURLToPath(import.meta.url), 'report', input.session_id], { detached: true, stdio: 'ignore', windowsHide: true }).unref()
     }
   } else if (mode === 'report') {

@@ -35,7 +35,9 @@ Tested on Windows (PowerShell panes). Linux and macOS should work, but have not 
 3. Install the Claude Code hooks (they make sleeping sessions visible in `ListAgents` and
    wake them on `SendMessage`; both do nothing while the router is not running). A third
    one, on SessionStart, matters only with a `wakeCommand` of your own: herdr then resumes
-   sessions through it after a herdr restart too, instead of a plain `claude --resume`.
+   sessions through it after a herdr restart too, instead of a plain `claude --resume`. The
+   hooks run a copy of `hook.mjs` in the plugin's config folder: run the action again after
+   updating the plugin.
 
    ```bash
    herdr plugin action invoke herdr-wake.install-hooks
@@ -72,18 +74,19 @@ router types your messages into their pane instead.
 
 A launcher that starts Claude Code with `TG_KEY` set to the herdr tab's topic:
 `topic:<workspace>` for a workspace's first tab, `topic:<workspace> / <tab label>` for the
-others, the folder outside herdr, non-ASCII characters dropped (headers must be ASCII). The
-`telegram` MCP server sends it as `X-Cwd: ${TG_KEY:-}`, and the router finds the tab by the
-same key.
+others, non-ASCII characters dropped (headers must be ASCII); the folder outside herdr, or
+when nothing of the workspace's name is left. The `telegram` MCP server sends it as
+`X-Cwd: ${TG_KEY:-}`, and the router finds the tab by the same key.
 
 ```bash
 herdr plugin action invoke herdr-wake.install-launcher
 ```
 
 That puts `claude-tg` into `~/.local/bin` (sh for Git Bash, Linux and macOS, `.cmd` for
-PowerShell) and its key script, `tg-key.mjs`, into the plugin's config folder, so it keeps
-working when the plugin moves. A `claude-tg` that is not the plugin's is left alone. Its
-arguments go to `claude` as they are:
+PowerShell), with its key script beside it as `claude-tg-key.mjs`, so it keeps working when
+the plugin moves; run the action again after an update to refresh that copy. The folder must
+be on PATH (the action says when it is not). When a file of these names is not the plugin's,
+it installs nothing and says so. Its arguments go to `claude` as they are:
 
 ```json
 { "wakeCommand": "claude-tg --dangerously-skip-permissions --resume {session}" }
@@ -154,7 +157,7 @@ it has written an explicit `hasTrustDialogAccepted: false` for it into `~/.claud
 | `reaper.exclude` | `[]` | session names, workspace labels or titles never to put to sleep; exact (any case) or `"/regex/"` |
 | `reaper.maxPerRound` | `3` | sessions put to sleep per minute at most |
 | `listSleepingDays` | `7` | `ListAgents` lists sessions asleep for less than this (at most 15) and only counts the rest; a session sleeps until its pane is closed, so the full list keeps growing. All of them stay wakeable by name |
-| `wakeCommand` | `claude --resume {session}` | command typed into the pane to resume a session; with the hooks installed, herdr resumes through it after a restart too (plain words only, e.g. `claude-tg --resume {session}`) |
+| `wakeCommand` | `claude --resume {session}` | command typed into the pane to resume a session; with the hooks installed, herdr resumes through it after a restart too, when it is a command name on PATH followed by plain words (`claude-tg --resume {session}`, not a path) |
 | `wakeTimeoutSec` | `120` | how long to wait for a resumed session |
 | `url`, `authorization` | from `~/.claude.json` | tg-mcp base url (without `/mcp`) and the `Authorization` header value |
 | `server` | `telegram` | MCP server in `~/.claude.json` to take them from |

@@ -101,7 +101,9 @@ try {
       parts.push(
         `Sleeping sessions on this machine (not listed above): put to sleep by herdr-wake after they sat idle, or ` +
           `exited by the user; their pane is still open. ` +
-          `SendMessage to one by name wakes it first (takes about 10 to 30 seconds), then delivers.\n${rows.join('\n')}`,
+          `SendMessage to one by name wakes it first (takes about 10 to 30 seconds), then delivers. ` +
+          `A sleeping session is a normal target: do not reroute its work or call it gone because it sleeps; ` +
+          `once woken it is the same session (id, name, transcript).\n${rows.join('\n')}`,
       )
     }
     if (parts.length) {

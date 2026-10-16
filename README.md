@@ -90,10 +90,11 @@ session, start it as a channel. During the channels research preview custom chan
 the development flag (Claude Code shows a confirmation prompt on start):
 
 ```bash
-alias claude-tg='TG_CHANNEL=1 claude --dangerously-load-development-channels server:telegram'
+alias claude-channel='TG_CHANNEL=1 claude --dangerously-load-development-channels server:telegram'
 ```
 
-On Windows PowerShell `${PWD}` does not work, see the notes below.
+On Windows PowerShell `${PWD}` does not work, see the notes below. In herdr, the
+[herdr launcher](#herdr-launcher) sets a topic per tab instead.
 
 ### Client setup notes
 
@@ -126,39 +127,41 @@ On Windows PowerShell `${PWD}` does not work, see the notes below.
 - **To see what the server received**, look for the `session #N up: <key> channel=<bool>`
   line it logs for every connection: `journalctl --user -u tg-mcp | grep ' up:'`.
 
-Example: a PowerShell launcher for the herdr terminal workspace manager that makes every session a channel and gives each herdr tab its own topic: the workspace's
-first tab is named after the workspace (`Billing`), other tabs get the tab label appended
-(`Billing / 2`, or `Billing / hotfix` after renaming the tab). Outside herdr it falls back
-to the folder. The server is added with
-`--header 'X-Cwd: ${TG_KEY:-}' --header 'X-Channel: ${TG_CHANNEL:-0}'`.
+### herdr launcher
 
-```powershell
-$key = (Get-Location).Path
-if ($env:HERDR_PANE_ID -and $env:HERDR_BIN_PATH) {
-    try {
-        $h = $env:HERDR_BIN_PATH
-        $pane = (& $h pane get $env:HERDR_PANE_ID | ConvertFrom-Json).result.pane
-        $ws = ((& $h workspace list | ConvertFrom-Json).result.workspaces |
-            Where-Object workspace_id -eq $pane.workspace_id).label
-        # tab list comes in display order; tab ids change across herdr restarts, labels don't
-        $tabs = @((& $h tab list | ConvertFrom-Json).result.tabs |
-            Where-Object workspace_id -eq $pane.workspace_id)
-        if ($ws) {
-            $key = "topic:$ws"
-            if ($tabs.Count -gt 1 -and $tabs[0].tab_id -ne $pane.tab_id) {
-                $key += " / " + ($tabs | Where-Object tab_id -eq $pane.tab_id).label
-            }
-        }
-    } catch {}
-}
-$env:TG_KEY = ($key -replace '[^\x20-\x7E]', '').Trim()   # headers must be ASCII
-$env:TG_CHANNEL = '1'
-try {
-    claude --dangerously-load-development-channels server:telegram @args
-} finally {
-    Remove-Item Env:TG_KEY, Env:TG_CHANNEL -ErrorAction SilentlyContinue
-}
+If you run your agents in [herdr](https://herdr.dev), `claude-tg` gives each herdr tab its own
+topic: the workspace's first tab is named after the workspace (`Billing`), other tabs get the
+tab label appended (`Billing / 2`, or `Billing / hotfix` after renaming the tab). Outside herdr
+it falls back to the folder. It comes with the [herdr-wake](herdr-wake/README.md) plugin:
+
+```bash
+herdr plugin install Eithery-rc/tg-mcp/herdr-wake
+herdr plugin action invoke herdr-wake.install-launcher
 ```
+
+That puts `claude-tg` into `~/.local/bin` (a sh script for Git Bash, Linux and macOS, a `.cmd`
+for PowerShell). It sets `TG_KEY` to the tab's routing key (non-ASCII characters dropped,
+since headers must be ASCII) and runs `claude` with whatever arguments it got: `claude-tg`,
+`claude-tg --dangerously-skip-permissions`, `claude-tg --resume <session id>`. Nothing stays
+running beside Claude: the sh script replaces itself with it. Add the server with
+`--header 'X-Cwd: ${TG_KEY:-}'`, which works from PowerShell too, unlike `${PWD}`.
+
+Use it wherever Claude starts:
+
+- By hand: `claude-tg` in place of `claude`.
+- New sessions from the [agent board](https://github.com/MokuTeam/herdr-agent-board):
+  `"launch": { "claude": ["claude-tg"] }` in the board's config.json, plus
+  `"--dangerously-skip-permissions"` if that is how you run Claude.
+- Sessions herdr-wake wakes: `"wakeCommand": "claude-tg --resume {session}"` in its
+  config.json (same flags as above). With herdr-wake's hooks installed, herdr then also resumes
+  sessions through it after a herdr restart, instead of a plain `claude --resume`.
+
+The router maps the same keys back to tabs, so a message in a tab's topic reaches the session
+in that tab. To make sessions channels as well, set `TG_CHANNEL=1` in the environment, add
+`--header 'X-Channel: ${TG_CHANNEL:-0}'` and start them with
+`claude-tg --dangerously-load-development-channels server:telegram`. Claude Code's own
+switches, such as `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` for agent teams, are not the
+launcher's business: put them in `env` in `~/.claude/settings.json`.
 
 ## Using it from scripts
 

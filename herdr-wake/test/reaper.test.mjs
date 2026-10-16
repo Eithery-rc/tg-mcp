@@ -11,7 +11,7 @@ const min = m => now - m * 60_000
 const snap = {
   workspaces: [
     { workspace_id: 'w1', label: 'Billing' },
-    { workspace_id: 'w2', label: 'Блюбениан монитор' },
+    { workspace_id: 'w2', label: 'Счета монитор' },
   ],
   panes: [
     { pane_id: 'w1:p1', workspace_id: 'w1', agent: 'claude', agent_status: 'idle', agent_session: { value: 'a' } },
@@ -27,7 +27,7 @@ const snap = {
 }
 const live = new Map(
   [
-    { sessionId: 'a', name: 'Billing-master', status: 'idle', statusUpdatedAt: min(90), cwd: 'C:\\Work\\BB' },
+    { sessionId: 'a', name: 'Billing-master', status: 'idle', statusUpdatedAt: min(90), cwd: 'C:\\Work\\Acme' },
     { sessionId: 'b', name: 'recent', status: 'idle', statusUpdatedAt: min(20) },
     { sessionId: 'c', name: 'monitor-like', status: 'shell', statusUpdatedAt: min(300) },
     { sessionId: 'd', name: 'asking', status: 'idle', statusUpdatedAt: min(300) },
@@ -59,7 +59,7 @@ test('who sleeps and why the rest stays up', () => {
     idleMin: 90,
     sleep: true,
     session: 'a',
-    cwd: 'C:\\Work\\BB',
+    cwd: 'C:\\Work\\Acme',
     reason: 'idle 90 min',
   })
   // only sessions that just need more idle time count down to sleep
@@ -90,7 +90,7 @@ test('a session exited by hand counts as asleep while its pane stays open', () =
 
 test('exclude patterns', () => {
   assert.equal(matchesAny(['billing-master'], ['Billing-master']), true)
-  assert.equal(matchesAny(['/^Centium/'], ['centium-EON']), true)
+  assert.equal(matchesAny(['/^Acme/'], ['acme-ledger']), true)
   assert.equal(matchesAny(['Billing'], ['Billing-master']), false)
   assert.equal(matchesAny([], ['x']), false)
 })
@@ -116,12 +116,12 @@ test('scheduled jobs are found by recent CronCreate or ScheduleWakeup calls only
 
 test('transcript path follows the cwd slug, else any project folder', () => {
   const projects = mkdtempSync(join(tmpdir(), 'herdr-wake-projects-'))
-  mkdirSync(join(projects, 'C--Work-BB'))
+  mkdirSync(join(projects, 'C--Work-Acme'))
   mkdirSync(join(projects, 'C--Elsewhere'))
   writeFileSync(join(projects, 'stray-file.txt'), '')
-  writeFileSync(join(projects, 'C--Work-BB', 'abc.jsonl'), '')
+  writeFileSync(join(projects, 'C--Work-Acme', 'abc.jsonl'), '')
   writeFileSync(join(projects, 'C--Elsewhere', 'moved.jsonl'), '')
-  assert.equal(transcriptPath('abc', 'C:\\Work\\BB\\', projects), join(projects, 'C--Work-BB', 'abc.jsonl'))
-  assert.equal(transcriptPath('moved', 'C:\\Work\\BB', projects), join(projects, 'C--Elsewhere', 'moved.jsonl'))
-  assert.equal(transcriptPath('missing', 'C:\\Work\\BB', projects), null)
+  assert.equal(transcriptPath('abc', 'C:\\Work\\Acme\\', projects), join(projects, 'C--Work-Acme', 'abc.jsonl'))
+  assert.equal(transcriptPath('moved', 'C:\\Work\\Acme', projects), join(projects, 'C--Elsewhere', 'moved.jsonl'))
+  assert.equal(transcriptPath('missing', 'C:\\Work\\Acme', projects), null)
 })

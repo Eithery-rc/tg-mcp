@@ -9,7 +9,7 @@ const footer = `  ${E}[0m${E}[38;2;255;107;128m⏵⏵ bypass permissions on${E}[
 const screen = input => ['● earlier answer', '', rule, input, bottom, footer].join('\n')
 
 test('a dim suggestion is not a draft (captured from a live pane)', () => {
-  assert.equal(inputDraft(screen(`❯ ${E}[0m${E}[2mзаводи сансиповские 3 часа${E}[0m`)), '')
+  assert.equal(inputDraft(screen(`❯ ${E}[0m${E}[2mзаводи вчерашние 3 часа${E}[0m`)), '')
 })
 
 test('an empty box is empty', () => {
@@ -46,7 +46,7 @@ test('the development channels warning is recognised', () => {
 })
 
 test('the folder trust question is recognised and is not the channels warning', () => {
-  const s = ' Accessing workspace:\n\n C:/Work/Personal/herdr-wake\n\n ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel'
+  const s = ' Accessing workspace:\n\n C:/Projects/herdr-wake\n\n ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel'
   assert.equal(isTrustDialog(s), true)
   assert.equal(isChannelsWarning(s), false)
 })

@@ -1,5 +1,7 @@
 # tg-mcp
 
+![tg-mcp: Claude Code agents message you in Telegram, your replies land in the running session](docs/assets/social-preview.png)
+
 A Telegram bridge for Claude Code agents: one small server process that all your agents
 reach over HTTP. Agents can message you, ask you questions with tap-to-answer buttons,
 and send files. You can write back, and your message is **pushed into the running

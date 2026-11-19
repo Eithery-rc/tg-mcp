@@ -661,6 +661,22 @@ export class Hub {
     return this.sessions.size
   }
 
+  /**
+   * Per-session liveness for supervisors. A session can outlive its client's push stream (the client keeps
+   * the old id after a server restart and never re-initializes), so "the process runs" is not "the topic is
+   * heard": stream=false on every channel session of a key means messages for it only queue.
+   */
+  sessionStatus() {
+    return [...this.sessions.values()]
+      .map(s => ({ n: s.n, key: s.key, channel: s.channel, stream: hasLiveStream(s.transport), pane: s.pane || null,
+        lastSeen: new Date(s.lastSeen).toISOString(), lastActive: new Date(s.lastActive).toISOString() }))
+      .sort((a, b) => a.n - b.n)
+  }
+
+  get startedAtIso() {
+    return new Date(this.startedAt).toISOString()
+  }
+
   /** Plain notification for scripts and hooks (POST /notify). */
   async notify(key: string, text: string, silent = false) {
     return this.sendText(key, text, { silent })

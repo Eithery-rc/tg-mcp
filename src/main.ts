@@ -27,6 +27,11 @@ const server = Bun.serve({
 
     if (pathname === '/mcp') return hub.handleMcp(req)
 
+    if (pathname === '/sessions' && req.method === 'GET') {
+      // For supervisors (herdr session-keeper): which keys have a channel session with a live push stream.
+      return Response.json({ startedAt: hub.startedAtIso, sessions: hub.sessionStatus() })
+    }
+
     if (pathname === '/notify' && req.method === 'POST') {
       // For scripts and hooks: {"text": "...", "cwd"?: "/path" | "topic"?: "name", "silent"?: true}
       const body = (await req.json().catch(() => null)) as { text?: string; cwd?: string; topic?: string; silent?: boolean } | null

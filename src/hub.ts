@@ -13,6 +13,7 @@ import { config } from './config'
 import { RingEventStore } from './events'
 import { chunkMarkdown, escapeHtml, markdownToHtml } from './format'
 import type { InboxItem, Store, Topic } from './store'
+import { sttFilename, type Transcriber } from './stt'
 import { Telegram, TelegramError, type InlineKeyboard, type TgCallbackQuery, type TgMessage, type TgUpdate } from './telegram'
 
 export type Session = {
@@ -91,6 +92,7 @@ export class Hub {
     private store: Store,
     private ownerId: number | undefined,
     private makeServer: (hub: Hub, s: Session) => McpServer,
+    private transcribe: Transcriber | null = null,
   ) {
     setInterval(() => this.collectStale(), 5 * 60_000).unref()
   }
@@ -473,7 +475,9 @@ export class Hub {
       if (s) return this.verdict(s, rid, v[1]!.toLowerCase().startsWith('y'))
     }
 
-    const { content, meta } = describe(msg)
+    const described = describe(msg)
+    const { meta } = described
+    const content = await this.transcribeVoice(msg, described.content, meta)
 
     // An open question in this topic takes the answer before anything else.
     const replyTo = msg.reply_to_message?.message_id
@@ -481,7 +485,7 @@ export class Hub {
     const ask = asks.find(a => a.messageId === replyTo) ?? asks[asks.length - 1]
     if (ask) {
       const answer = meta.file_id ? `${content}\n[attachment file_id=${meta.file_id} kind=${meta.file_kind}]` : content
-      return this.finishAsk(ask.id, answer, `✅ ${text || `(${meta.file_kind})`}`)
+      return this.finishAsk(ask.id, answer, `✅ ${meta.transcribed ? content : text || `(${meta.file_kind})`}`)
     }
 
     // Replying to a specific bot message targets the session that sent it.
@@ -539,6 +543,27 @@ export class Hub {
       disable_notification: silent,
       reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true },
     })
+  }
+
+  /**
+   * Voice notes reach agents as text when STT is configured. The audio stays attached (file_id), and a failed
+   * transcription is said in the topic and recorded in meta, so it never reads as an empty voice note.
+   */
+  private async transcribeVoice(msg: TgMessage, content: string, meta: Record<string, string>): Promise<string> {
+    const audio = msg.voice ?? msg.audio
+    if (!this.transcribe || !audio) return content
+    try {
+      const file = await this.tg.download(audio.file_id)
+      const transcript = await this.transcribe(file.bytes, sttFilename(file.path))
+      meta.transcribed = 'true'
+      return msg.caption ? `${msg.caption}\n🎤 ${transcript}` : `🎤 ${transcript}`
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err)
+      console.error('transcription failed', msg.message_id, reason)
+      meta.transcription_error = reason.slice(0, 300)
+      await this.reply(msg, `⚠️ Не удалось расшифровать голосовое: ${reason.slice(0, 300)}`, true).catch(() => {})
+      return content
+    }
   }
 
   private async react(msg: TgMessage, emoji: string) {

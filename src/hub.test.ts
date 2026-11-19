@@ -89,3 +89,66 @@ test('an aborted wait returns at once', async () => {
   ctl.abort()
   expect(await wait).toEqual([])
 })
+
+
+// ───────────────────────────── voice transcription ─────────────────────────────
+
+const voice = (id: number, caption?: string): TgUpdate => ({
+  update_id: id,
+  message: {
+    message_id: id,
+    message_thread_id: THREAD,
+    from: { id: OWNER, is_bot: false, first_name: 'R' },
+    chat: { id: OWNER, type: 'private' },
+    date: 1_700_000_000,
+    voice: { file_id: 'VOICE', duration: 3, mime_type: 'audio/ogg' },
+    ...(caption ? { caption } : {}),
+  },
+})
+
+function voiceHub(transcribe: (audio: Uint8Array, filename: string) => Promise<string>) {
+  const tg = {
+    call: async (method: string, params: any) => {
+      calls.push({ method, params })
+      return { message_id: 1000 + calls.length }
+    },
+    download: async (fileId: string) => ({ bytes: new Uint8Array([1, 2, 3]), path: `voice/${fileId}.oga` }),
+  } as unknown as Telegram
+  return new Hub(tg, store, OWNER, () => { throw new Error('no MCP sessions in these tests') }, transcribe)
+}
+
+test('a voice note reaches the agents as its transcript, with the audio still attached', async () => {
+  let sentName = ''
+  const h = voiceHub(async (_audio, filename) => {
+    sentName = filename
+    return 'купи хлеба'
+  })
+  await h.handleUpdate(voice(9))
+  expect(sentName).toBe('VOICE.ogg') // Telegram's .oga is renamed, OpenAI rejects it by extension
+  const [item] = h.drainInbox(KEY)
+  expect(item!.text).toBe('🎤 купи хлеба')
+  expect(item!.meta.transcribed).toBe('true')
+  expect(item!.meta.file_id).toBe('VOICE')
+})
+
+test('a caption is kept in front of the transcript', async () => {
+  const h = voiceHub(async () => 'подробности')
+  await h.handleUpdate(voice(9, 'к задаче'))
+  expect(h.drainInbox(KEY).map(it => it.text)).toEqual(['к задаче\n🎤 подробности'])
+})
+
+test('a failed transcription is said in the topic and recorded, not dropped', async () => {
+  const h = voiceHub(async () => { throw new Error('whisper-1 HTTP 429: quota') })
+  await h.handleUpdate(voice(9))
+  const warning = calls.find(c => c.method === 'sendMessage' && String(c.params.text).startsWith('⚠️'))
+  expect(warning?.params.text).toContain('HTTP 429')
+  const [item] = h.drainInbox(KEY)
+  expect(item!.text).toBe('(voice attached)')
+  expect(item!.meta.transcription_error).toContain('HTTP 429')
+  expect(item!.meta.transcribed).toBeUndefined()
+})
+
+test('without a transcriber a voice note is passed on untouched', async () => {
+  await hub.handleUpdate(voice(9))
+  expect(hub.drainInbox(KEY).map(it => it.text)).toEqual(['(voice attached)'])
+})

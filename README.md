@@ -192,6 +192,19 @@ Pass `"cwd": "/path/to/project"` instead of `topic` to post into a project's top
 - `/status` in the bot lists connected sessions.
 - If you delete a topic, the bot creates a new one the next time the agent writes.
 
+## Voice messages (optional)
+
+Set `STT_API_KEY` and the bot transcribes voice notes and audio files before routing them:
+the agent gets `🎤 <transcript>` as the message text (after the caption, if any), and the
+audio stays attached as before. Any OpenAI-compatible `/audio/transcriptions` endpoint
+works; point `STT_BASE_URL` at another provider (Groq, a self-hosted whisper server) and set
+`STT_MODEL` to its model name. If transcription fails, the bot says so in the topic and the
+agent gets the plain voice note with `transcription_error` in `meta`.
+
+The audio is sent to that provider, so leave `STT_API_KEY` unset if that is not acceptable.
+Messages are handled one at a time to keep their order, so a slow provider delays the
+messages after a voice note by at most `STT_TIMEOUT_SEC` (default 30).
+
 ## Local router (optional)
 
 Channels need a development flag during the research preview, and a channel session only
@@ -220,7 +233,7 @@ The protocol, for writing your own router:
 
 - `GET /router/wait?timeout=25` (bearer auth) long-polls for queued messages, at most 50
   seconds. Each item has `id`, `key`, `topic`, `text`, `meta` (message_id, ts, attachment
-  fields, in_reply_to), `queued_at`, `pane` and `live_panes`. Messages are leased to the
+  fields, in_reply_to, transcribed or transcription_error), `queued_at`, `pane` and `live_panes`. Messages are leased to the
   router for 3 minutes. A topic is handed out as a whole and only while none of its
   messages is leased, so its messages stay in order.
 - `POST /router/ack` with `{"id": 12, "outcome": "delivered" | "retry" | "skipped",

@@ -89,3 +89,8 @@ test('an aborted wait returns at once', async () => {
   ctl.abort()
   expect(await wait).toEqual([])
 })
+
+test('session status is an empty list on a fresh hub', () => {
+  expect(hub.sessionStatus()).toEqual([])
+  expect(Date.parse(hub.startedAtIso)).not.toBeNaN()
+})

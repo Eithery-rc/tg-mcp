@@ -182,6 +182,13 @@ curl -s https://example.com/tg-mcp/notify \
 
 Pass `"cwd": "/path/to/project"` instead of `topic` to post into a project's topic.
 
+`GET /sessions` (bearer auth) tells a supervisor which topics are actually heard. After a
+server restart a Claude Code client keeps its old MCP session id and never reconnects its
+push stream, so the process looks alive while its topic only queues. Each item has `n`,
+`key`, `channel`, `stream` (a live push stream is open), `pane`, `lastSeen` and
+`lastActive`; `startedAt` is when the server started. A key is heard when one of its
+sessions has `channel` and `stream` both true.
+
 ## How routing works
 
 - A message in a topic goes to the session that most recently did something in that

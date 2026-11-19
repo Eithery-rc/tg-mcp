@@ -17,6 +17,18 @@ if (mcpToken.length < 32) {
 
 const ownerRaw = process.env.OWNER_ID?.trim()
 
+// Voice transcription is opt-in: audio only leaves the server when STT_API_KEY is set.
+const sttKey = process.env.STT_API_KEY?.trim()
+const stt = sttKey
+  ? {
+      apiKey: sttKey,
+      baseUrl: process.env.STT_BASE_URL?.trim() || 'https://api.openai.com/v1',
+      model: process.env.STT_MODEL?.trim() || 'whisper-1',
+      timeoutMs: Number(process.env.STT_TIMEOUT_SEC || 30) * 1000,
+      language: process.env.STT_LANGUAGE?.trim() || undefined,
+    }
+  : null
+
 export const config = {
   botToken: required('TELEGRAM_BOT_TOKEN'),
   // When unset the bot runs in pairing mode: it only tells people their id.
@@ -29,6 +41,12 @@ export const config = {
   relayPermissions: (process.env.RELAY_PERMISSIONS ?? '1') !== '0',
   // Opt-in: lets a local router (e.g. a herdr plugin) take messages no channel session took.
   router: /^(1|true|yes|on)$/i.test(process.env.ROUTER?.trim() ?? ''),
+  stt,
+}
+
+if (stt && !(stt.timeoutMs > 0)) {
+  console.error('STT_TIMEOUT_SEC must be a positive number of seconds')
+  process.exit(1)
 }
 
 if (config.ownerId !== undefined && !Number.isSafeInteger(config.ownerId)) {

@@ -3,11 +3,13 @@ import { config } from './config'
 import { Hub } from './hub'
 import { createMcpServer } from './mcp'
 import { Store } from './store'
+import { openAiTranscriber } from './stt'
 import { Telegram } from './telegram'
 
 const tg = new Telegram(config.botToken)
 const store = new Store(config.dataDir)
-const hub = new Hub(tg, store, config.ownerId, createMcpServer)
+const hub = new Hub(tg, store, config.ownerId, createMcpServer, config.stt ? openAiTranscriber(config.stt) : null)
+if (config.stt) console.log(`voice transcription on: ${config.stt.model} at ${config.stt.baseUrl}`)
 
 const expected = Buffer.from(`Bearer ${config.mcpToken}`)
 function authorized(req: Request): boolean {
